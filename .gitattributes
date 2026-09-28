@@ -1,0 +1,13 @@
+# По умолчанию нормализуем в LF в репозитории
+* text=auto
+
+# Windows-скрипты обязаны быть с CRLF, иначе ломаются
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.md  text eol=crlf
+
+# Двоичные файлы не трогаем
+*.png binary
+*.ico binary
+*.exe binary

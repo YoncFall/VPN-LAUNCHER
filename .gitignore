@@ -1,0 +1,21 @@
+# Логи/настройки/кэш
+*.log
+myvpn.log
+singbox.log
+singbox.log.err
+state.json
+config.json
+cache.db
+
+# Движок sing-box (GPL-3.0, качается отдельно)
+bin/sing-box.exe
+sing-box.exe
+
+# Сборка и мусор
+*.zip
+*.7z
+Thumbs.db
+desktop.ini
+.vs/
+.vscode/
+obj/
