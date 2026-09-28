@@ -51,6 +51,7 @@ $args = @(
     "/reference:$sma"
     '/reference:System.Core.dll'
     "/win32icon:$ico"
+    "/win32manifest:$(Join-Path $PSScriptRoot 'app.manifest')"
     "/out:$exe"
     $cs
 )

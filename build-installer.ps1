@@ -135,6 +135,7 @@ $cargs = @(
     '/reference:System.IO.Compression.dll'
     '/reference:System.IO.Compression.FileSystem.dll'
     "/win32icon:$(Join-Path $srcDir 'app.ico')"
+    "/win32manifest:$(Join-Path $root 'app.manifest')"
     "/resource:$payload,payload.zip"
     "/resource:$(Join-Path $srcDir 'app.ico'),appicon.ico"
     "/out:$setup"

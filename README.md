@@ -29,7 +29,7 @@
 
 ## Установка
 
-**Обычный путь:** скачай `VPN-LAUNCHER-1.0.3-Setup.exe` из
+**Обычный путь:** скачай `VPN-LAUNCHER-1.0.4-Setup.exe` из
 [Releases](https://github.com/yoncfall-tech/VPN-LAUNCHER/releases), запусти, нажми
 «Установить». Программа встаёт в `%LOCALAPPDATA%\Programs\VPNLauncher`, ярлык
 появляется на рабочем столе и в меню «Пуск», а в «Программы и компоненты» —
@@ -49,7 +49,7 @@
 | `/NORUN` | не запускать после установки |
 | `/UNINSTALL` | удалить программу |
 
-**Для тех, кто любит zip:** архив `VPN-LAUNCHER-1.0.3.zip` тоже в Releases, там
+**Для тех, кто любит zip:** архив `VPN-LAUNCHER-1.0.4.zip` тоже в Releases, там
 работает `install.bat` из папки `setup`. `sing-box.exe` уже внутри.
 
 ### Сборка из исходников
@@ -57,9 +57,9 @@
 1. Скачай `sing-box.exe` для Windows x64 со страницы
    [релизов sing-box](https://github.com/SagerNet/sing-box/releases)
 2. Запусти `build-exe.ps1` — соберётся `bin\VPNLauncher.exe`
-3. Запусти `build-installer.ps1 -Version 1.0.3` — соберётся
-   `dist\VPN-LAUNCHER-1.0.3-Setup.exe`
-4. Либо `build-release.ps1 -Version 1.0.3` для zip-архива
+3. Запусти `build-installer.ps1 -Version 1.0.4` — соберётся
+   `dist\VPN-LAUNCHER-1.0.4-Setup.exe`
+4. Либо `build-release.ps1 -Version 1.0.4` для zip-архива
 
 Из внешних программ нужен только .NET Framework, который уже есть в Windows.
 

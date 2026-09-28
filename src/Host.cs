@@ -15,6 +15,7 @@ using System.Windows.Forms;
 static class Host
 {
     const string MutexName = @"Local\MyVPNLauncher_YoncFALL_9E1F4C";
+    const string MutexNameElevated = @"Local\MyVPNLauncher_YoncFALL_9E1F4C_Elevated";
     const int SW_RESTORE = 9;
 
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -45,6 +46,8 @@ static class Host
 
         if (HasFlag(args, "--selftest")) { return SelfTest(); }
 
+        bool elevated = IsElevated();
+
         string script = FindScript();
         if (script == null)
         {
@@ -53,8 +56,13 @@ static class Host
             return 2;
         }
 
+        // Повышенный экземпляр не должен путаться с обычным: у них разные
+        // мьютексы, иначе новый процесс решит, что окно уже открыто,
+        // и молча закроется. Иначе режим TUN не запускался бы.
+        string mutexName = elevated ? MutexNameElevated : MutexName;
+
         bool created;
-        using (Mutex mutex = new Mutex(true, MutexName, out created))
+        using (Mutex mutex = new Mutex(true, mutexName, out created))
         {
             if (!created)
             {
@@ -79,6 +87,19 @@ static class Host
                 try { mutex.ReleaseMutex(); } catch { }
             }
         }
+    }
+
+    static bool IsElevated()
+    {
+        try
+        {
+            using (System.Security.Principal.WindowsIdentity id = System.Security.Principal.WindowsIdentity.GetCurrent())
+            {
+                return new System.Security.Principal.WindowsPrincipal(id)
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+        }
+        catch { return false; }
     }
 
     // Скрипт читается в память и выполняется прямо в этом процессе.

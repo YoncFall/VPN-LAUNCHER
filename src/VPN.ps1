@@ -1,5 +1,5 @@
 ﻿# VPN.ps1 - графический клиент. Движок sing-box (SagerNet).
-# Запуск:  powershell -NoProfile -ExecutionPolicy Bypass -STA -File "%LOCALAPPDATA%\MyVPN\VPN.ps1"
+# Запуск:  VPNLauncher.exe (своё окно и своя иконка, без консоли)
 
 param([switch]$Autoconnect)
 
@@ -485,7 +485,23 @@ $btnConnect.Add_Click({
             return
         }
         try {
-            Start-Process powershell -Verb RunAs -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', "`"$PSCommandPath`"", '-Autoconnect')
+            # Повышаем права собственной программы, а не powershell.exe.
+            # Запуск "powershell -Verb RunAs -ExecutionPolicy Bypass" - это
+            # ровно то, на что antivirus и SmartScreen реагируют предупреждением,
+            # плюс в панели задач появлялся чужой значок.
+            $hostExe = $null
+            foreach ($cand in @((Join-Path $PSScriptRoot 'VPNLauncher.exe'),
+                                (Join-Path (Split-Path -Parent $PSScriptRoot) 'bin\VPNLauncher.exe'))) {
+                if ($cand -and (Test-Path -LiteralPath $cand)) { $hostExe = $cand; break }
+            }
+            if ($hostExe) {
+                Write-VpnLog ('elevating own executable: ' + $hostExe)
+                Start-Process -FilePath $hostExe -Verb RunAs -ArgumentList '--autoconnect' | Out-Null
+            } else {
+                # запасной путь для запуска из исходников без собранного exe
+                Write-VpnLog 'VPNLauncher.exe not found, falling back to powershell host'
+                Start-Process powershell -Verb RunAs -ArgumentList @('-NoProfile', '-STA', '-File', "`"$PSCommandPath`"", '-Autoconnect')
+            }
         } catch {
             Write-VpnLog ('elevation ERROR: ' + $_.Exception.Message)
             $lblStatus.Text = 'Не удалось получить права администратора'
