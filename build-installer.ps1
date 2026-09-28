@@ -100,11 +100,11 @@ If you redistribute this program you must keep this file, keep sing-box
 unmodified, and offer the corresponding source of both components:
 
   sing-box   : https://github.com/SagerNet/sing-box
-  launcher   : https://github.com/yoncfall-tech/VPN-LAUNCHER
+  launcher   : https://github.com/YoncFall/VPN-LAUNCHER
 
 You may obtain a copy of the GPL-3.0 from
 <https://www.gnu.org/licenses/gpl-3.0.txt> or
-<https://github.com/yoncfall-tech/VPN-LAUNCHER/blob/main/LICENSE>.
+<https://github.com/YoncFall/VPN-LAUNCHER/blob/main/LICENSE>.
 "@
 [System.IO.File]::WriteAllText((Join-Path $stage 'SING-BOX-LICENSE.txt'), ($notice -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
@@ -113,6 +113,18 @@ You may obtain a copy of the GPL-3.0 from
 Write-Host ''
 Write-Host 'упаковка файлов программы...'
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $payload -CompressionLevel Optimal
+
+# ---------- Setup.cs с актуальной версией ----------
+
+# Версия зашита константой в исходнике; раньше её забывали править, и в exe
+# с новым именем оказывалась старая версия (1.0.6 назывался 1.0.5). Теперь
+# версия подставляется автоматически из параметра -Version перед компиляцией.
+$setupSrc = [System.IO.File]::ReadAllText((Join-Path $insDir 'Setup.cs'))
+$setupSrc = [System.Text.RegularExpressions.Regex]::Replace(
+    $setupSrc,
+    'const string Version = "[0-9]+\.[0-9]+\.[0-9]+";',
+    ('const string Version = "' + $Version + '";'))
+[System.IO.File]::WriteAllText((Join-Path $stage 'Setup.cs'), $setupSrc, (New-Object System.Text.UTF8Encoding($true)))
 
 # ---------- компиляция установщика ----------
 
@@ -139,7 +151,7 @@ $cargs = @(
     "/resource:$payload,payload.zip"
     "/resource:$(Join-Path $srcDir 'app.ico'),appicon.ico"
     "/out:$setup"
-    (Join-Path $insDir 'Setup.cs')
+    (Join-Path $stage 'Setup.cs')
 )
 $log = & $csc @cargs 2>&1
 if ($LASTEXITCODE -ne 0) {

@@ -113,11 +113,11 @@ If you redistribute this archive you must keep this file, keep sing-box
 unmodified, and offer the corresponding source of both components:
 
   sing-box   : https://github.com/SagerNet/sing-box
-  launcher   : https://github.com/yoncfall-tech/VPN-LAUNCHER
+  launcher   : https://github.com/YoncFall/VPN-LAUNCHER
 
 You may obtain a copy of the GPL-3.0 from
 <https://www.gnu.org/licenses/gpl-3.0.txt> or
-<https://github.com/yoncfall-tech/VPN-LAUNCHER/blob/main/LICENSE>.
+<https://github.com/YoncFall/VPN-LAUNCHER/blob/main/LICENSE>.
 "@
 [System.IO.File]::WriteAllText((Join-Path $stage 'SING-BOX-LICENSE.txt'), ($notice -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
