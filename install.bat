@@ -48,7 +48,7 @@ if not exist "%DEST%" (
     exit /b 1
   )
   
-  rem --- что запускаем: exe без окна консоли, иначе откат на cmd ---
+  rem --- which launcher to run: exe (no console), fallback to cmd ---
   set "LAUNCHER=%DEST%\MyVPN.cmd"
   if exist "%DEST%\VPNLauncher.exe" set "LAUNCHER=%DEST%\VPNLauncher.exe"
   if not exist "%DEST%\MyVPN.cmd" if not exist "%DEST%\VPNLauncher.exe" (

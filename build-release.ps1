@@ -70,10 +70,11 @@ if ($Launcher) { Copy-Item $Launcher (Join-Path $stage 'bin\VPNLauncher.exe') }
 # .gitattributes требует CRLF, но рабочая копия может быть в LF, поэтому
 # нормализуем прямо здесь, перед упаковкой.
 
-# .bat и .cmd содержат кириллицу в echo, поэтому им нужен BOM, иначе
-# cmd.exe напечатает кракозябры. .ps1 с BOM обязателен для PowerShell 5.1,
+# BOM нужен только если в файле реально есть кириллица: чистый ASCII cmd.exe
+# читает и без BOM, а BOM в install.bat вызывает «'@echo' не является командой».
+# .ps1 (русские комментарии/сообщения) BOM обязателен для PowerShell 5.1,
 # .md и .txt BOM не нужен.
-$bomExt = @('.bat', '.cmd', '.ps1')
+$bomExt = @('.ps1')
 $textExt = @('.bat', '.cmd', '.ps1', '.md', '.txt')
 $fixed = 0
 Get-ChildItem $stage -Recurse -File | Where-Object { $textExt -contains $_.Extension.ToLower() } | ForEach-Object {
@@ -82,7 +83,8 @@ Get-ChildItem $stage -Recurse -File | Where-Object { $textExt -contains $_.Exten
     $norm = ($raw -replace "`r`n", "`n") -replace "`n", "`r`n"
     $b = [System.IO.File]::ReadAllBytes($_.FullName)
     $hasBom = ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
-    $wantBom = if ($bomExt -contains $ext) { $true } else { $hasBom }
+    $hasNonAscii = $raw -match '[^\x00-\x7F]'
+    $wantBom = if ($bomExt -contains $ext) { $hasNonAscii } else { $hasBom }
     if ($norm -ne $raw -or $wantBom -ne $hasBom) {
         [System.IO.File]::WriteAllText($_.FullName, $norm, (New-Object System.Text.UTF8Encoding($wantBom)))
         $what = if ($norm -ne $raw) { 'CRLF' } else { 'BOM' }
