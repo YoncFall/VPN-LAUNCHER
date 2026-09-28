@@ -7,3 +7,4 @@ dist/
 state.json
 config.json
 vpn-launcher.log
+app.pid
