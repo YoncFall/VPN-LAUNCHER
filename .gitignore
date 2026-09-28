@@ -11,6 +11,10 @@ cache.db
 bin/sing-box.exe
 sing-box.exe
 
+# Собранная обёртка запуска (собирается build-exe.ps1)
+bin/VPNLauncher.exe
+VPNLauncher.exe
+
 # Сборка и мусор
 *.zip
 *.7z

@@ -42,6 +42,15 @@ $form.MaximizeBox = $false
 $form.BackColor = $script:Pal.Bg
 $form.ForeColor = $script:Pal.Text
 
+# иконка приложения: окно, панель задач и Alt+Tab
+try {
+    $icoPath = Join-Path $PSScriptRoot 'app.ico'
+    if (-not (Test-Path $icoPath)) { $icoPath = Join-Path (Join-Path $PSScriptRoot 'src') 'app.ico' }
+    if (Test-Path $icoPath) { $form.Icon = [System.Drawing.Icon]::new($icoPath) }
+} catch {
+    Write-VpnLog ('icon error: ' + $_.Exception.Message)
+}
+
 # закруглённые углы + своя шапка вместо системного заголовка
 Install-GameCorners $form
 $script:Cap = Install-GameTitleBar $form 46
