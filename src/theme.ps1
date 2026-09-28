@@ -14,6 +14,75 @@ public class MyVpnNative {
 '@
 }
 
+# Поля ввода получают тонкую тёмную рамку темы вместо серой системной.
+# Рисуем поверх NC-области через GetWindowDC - стандартный приём, он не
+# трогает курсор, выделение и ввод.
+if (-not ('GameThemeNative' -as [type])) {
+    # компилятор Add-Type не ссылается на System.Windows.Forms и System.Drawing
+    # по умолчанию - передаём их явно, иначе "using System.Windows.Forms" падает
+    Add-Type -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+// Тёмное оформление полей ввода.
+// Системная тема Windows (светлая) рисует у TextBox серую рамку, а у
+// ComboBox - белую кнопку-стрелку. Перекрываем их поверх готовой отрисовки
+// (WM_PAINT) рамками и кнопкой цветов темы - так выглядит одинаково на
+// любой теме ОС. Курсор, выделение и ввод этот приём не трогает.
+public static class GameThemeNative {
+    public static void Ring(Graphics g, int w, int h, Color c) {
+        if (w <= 0 || h <= 0) return;
+        using (Pen p = new Pen(c)) {
+            g.DrawRectangle(p, 0, 0, w - 1, h - 1);
+        }
+    }
+
+    public static void TextBoxPaint(TextBox t, Color frame) {
+        using (Graphics g = Graphics.FromHwnd(t.Handle)) {
+            Ring(g, t.Width, t.Height, frame);
+        }
+    }
+
+    public static void ComboPaint(ComboBox c, Color frame, Color btnBack, Color btnLine, Color chevron) {
+        if (c.Width <= 0 || c.Height <= 0) return;
+        using (Graphics g = Graphics.FromHwnd(c.Handle)) {
+            Ring(g, c.Width, c.Height, frame);
+            // кнопка-стрелка справа - своим цветом вместо нативной белой
+            int bw = 17;
+            Rectangle r = new Rectangle(c.Width - bw, 0, bw - 1, c.Height);
+            using (SolidBrush b = new SolidBrush(btnBack)) g.FillRectangle(b, r);
+            using (Pen p = new Pen(btnLine)) g.DrawLine(p, r.Left, 1, r.Left, c.Height - 2);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int cx = r.Left + bw / 2, cy = c.Height / 2;
+            Point[] pts = { new Point(cx - 4, cy - 1), new Point(cx + 4, cy - 1), new Point(cx, cy + 3) };
+            using (SolidBrush b = new SolidBrush(chevron)) g.FillPolygon(b, pts);
+        }
+    }
+}
+
+public class GameTextBox : TextBox {
+    public Color FrameColor = System.Drawing.Color.FromArgb(46, 52, 68);
+    protected override void WndProc(ref Message m) {
+        base.WndProc(ref m);
+        if (m.Msg == 0x000F) GameThemeNative.TextBoxPaint(this, FrameColor);
+    }
+}
+
+public class GameComboBox : ComboBox {
+    public Color FrameColor = System.Drawing.Color.FromArgb(46, 52, 68);
+    public Color BtnBack   = System.Drawing.Color.FromArgb(24, 27, 37);
+    public Color BtnLine   = System.Drawing.Color.FromArgb(46, 52, 68);
+    public Color Chevron   = System.Drawing.Color.FromArgb(124, 134, 156);
+    protected override void WndProc(ref Message m) {
+        base.WndProc(ref m);
+        if (m.Msg == 0x000F) GameThemeNative.ComboPaint(this, FrameColor, BtnBack, BtnLine, Chevron);
+    }
+}
+'@ -ReferencedAssemblies 'System.Windows.Forms.dll','System.Drawing.dll'
+}
+
 function Start-GameDrag {
     param($Form)
     try {
@@ -213,8 +282,21 @@ function Set-GameListDraw {
                 $tag = $script:Nodes[$e.Index]['tag']
                 $ms = $null
                 if ($tag -and $script:Ping.ContainsKey($tag)) { $ms = $script:Ping[$tag] }
-                $rectName = New-Object System.Drawing.Rectangle -ArgumentList $padL, $rowY, ($e.Bounds.Width - 90), $e.Bounds.Height
-                [System.Windows.Forms.TextRenderer]::DrawText($g, $text, $font, $rectName, $clr, $flags)
+                $proto = switch ($script:Nodes[$e.Index]['proto']) {
+                    'vless' { 'VLESS' } 'vmess' { 'VMESS' } 'trojan' { 'TROJAN' }
+                    'shadowsocks' { 'SS' } 'hysteria2' { 'HY2' } 'tuic' { 'TUIC' } default { '???' }
+                }
+                $y = $rowY
+                # протокол - колонка фиксированной ширины, выровнена вправо
+                $flagsProto = [System.Windows.Forms.TextFormatFlags]::Right -bor [System.Windows.Forms.TextFormatFlags]::VerticalCenter
+                $rectProto = New-Object System.Drawing.Rectangle -ArgumentList $padL, $y, 52, $e.Bounds.Height
+                [System.Windows.Forms.TextRenderer]::DrawText($g, $proto, $font, $rectProto, $pal.TextDim, $flagsProto)
+                # имя сервера - от выровненной колонки протокола до колонки пинга
+                $flagsName = [System.Windows.Forms.TextFormatFlags]::Left -bor
+                    [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor
+                    [System.Windows.Forms.TextFormatFlags]::EndEllipsis
+                $rectName = New-Object System.Drawing.Rectangle -ArgumentList ($padL + 58), $y, ($e.Bounds.Width - 58 - 96), $e.Bounds.Height
+                [System.Windows.Forms.TextRenderer]::DrawText($g, [string]$s.Items[$e.Index], $font, $rectName, $clr, $flagsName)
                 $pingTxt = '---'
                 $pclr = $pal.TextDim
                 if ($null -ne $ms) {
@@ -257,7 +339,7 @@ function New-GameList {
 
 function New-GameCombo {
     param([int]$X, [int]$Y, [int]$W, [int]$H)
-    $c = New-Object System.Windows.Forms.ComboBox
+    $c = New-Object GameComboBox
     $c.Location = New-Object System.Drawing.Point($X, $Y)
     $c.Size = New-Object System.Drawing.Size($W, $H)
     $c.DropDownStyle = 'DropDown'
@@ -266,6 +348,9 @@ function New-GameCombo {
     $c.ForeColor = $script:Pal.Text
     $c.Font = $script:FBody
     $c.FlatStyle = 'Flat'
+    # DropDown-комбобокс игнорирует Size.Height - реальная высота =
+    # ItemHeight + 4. Берём 26, чтобы итоговая высота совпала с полем ввода (30)
+    $c.ItemHeight = 26
     $c.Add_DrawItem({
         param($s, $e)
         $g = $e.Graphics
@@ -337,14 +422,15 @@ function New-GameRadio {
 
 function New-GameTextBox {
     param([int]$X, [int]$Y, [int]$W, [int]$H, [string]$Text)
-    $t = New-Object System.Windows.Forms.TextBox
+    $t = New-Object GameTextBox
     $t.Location = New-Object System.Drawing.Point($X, $Y)
     $t.Size = New-Object System.Drawing.Size($W, $H)
     $t.Text = $Text
     $t.Font = $script:FMono
     $t.BackColor = $script:Pal.Card
     $t.ForeColor = $script:Pal.Text
-    $t.BorderStyle = 'FixedSingle'
+    $t.BorderStyle = 'None'
+    $t.AutoSize = $false
     return $t
 }
 

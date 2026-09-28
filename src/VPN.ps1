@@ -127,12 +127,9 @@ function Add-Button($t, $x, $y, $w, $h, $color) {
 }
 
 function Format-NodeRow($n) {
-    $fl = switch ($n['proto']) {
-        'vless' { 'VLESS' } 'vmess' { 'VMESS' } 'trojan' { 'TROJAN' }
-        'shadowsocks' { 'SS' } 'hysteria2' { 'HY2' } 'tuic' { 'TUIC' } default { '???' }
-    }
-    # колонку пинга рисует сам список, поэтому в тексте её нет
-    return ('{0,-6} {1}' -f $fl, $n['display'])
+    # протокол и пинг рисует сам список отдельными колонками,
+    # в тексте строки остаётся только имя сервера
+    return [string]$n['display']
 }
 
 New-GameCaption 'ПОДПИСКА' 16 62 300 | ForEach-Object { $form.Controls.Add($_) }
@@ -209,7 +206,7 @@ $hint2.ForeColor = $script:Pal.TextDim
 $hint2.Font = $script:FSub
 $hint2.TextAlign = 'MiddleRight'
 
-$lstExcl = New-GameList 16 486 300 92 $false
+$lstExcl = New-GameList 16 486 300 84 $false
 $form.Controls.Add($lstExcl)
 
 $cmbProc = New-GameCombo 324 486 280 30
