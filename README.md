@@ -7,7 +7,9 @@
 
 ![Скриншот VPN LAUNCHER BY @YoncFALL](docs/screenshot.png)
 
-![license](https://img.shields.io/badge/license-GPL--3.0-blue) ![platform](https://img.shields.io/badge/platform-Windows-0078D4) ![engine](https://img.shields.io/badge/engine-sing--box-8A2BE2)
+![license](https://img.shields.io/badge/license-GPL--3.0-blue) ![platform](https://img.shields.io/badge/platform-Windows-0078D4) ![engine](https://img.shields.io/badge/engine-sing--box-8A2BE2) ![release](https://img.shields.io/github/v/release/YoncFall/VPN-LAUNCHER)
+
+Полный список изменений: **[CHANGELOG.md](CHANGELOG.md)**
 
 ---
 

@@ -53,7 +53,7 @@ New-Item -ItemType Directory -Path $stage, (Join-Path $stage 'src'), (Join-Path 
 
 # ---------- раскладка ----------
 
-foreach ($f in @('install.bat', 'uninstall.bat', 'README.md', 'LICENSE', 'NOTICE.md')) {
+foreach ($f in @('install.bat', 'uninstall.bat', 'README.md', 'CHANGELOG.md', 'SECURITY.md', 'LICENSE', 'NOTICE.md')) {
     $p = Join-Path $root $f
     if (Test-Path $p) { Copy-Item $p $stage }
 }
