@@ -4,7 +4,7 @@
 - мягкое свечение по контуру (24,34,46, a=26);
 - заливка градиентом (27,31,42) -> (22,25,34);
 - рамка Line (46,52,68), радиус 14;
-- акцентная полоска сверху: x=radius..radius+70, h=2, градиент Accent a=255 -> a=0.
+- акцентная полоска сверху (x=radius..radius+70) - УБРАТА по просьбе.
 
 Визуальное отклонение (просьба, скриншот «интерфейс градиент»): по рамке идут
 акцентные градиенты - ярче всего правый верхний и левый нижний углы; линии
@@ -58,14 +58,6 @@ class GameCard(QWidget):
         p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), r, r)
 
         self._edge_gradients(p, w, h, r)
-
-        # акцентная полоска сверху (theme.ps1:1122-1126)
-        strip = QLinearGradient(QPointF(r, 0), QPointF(r + 70, 0))
-        strip.setColorAt(0.0, QColor(0, 216, 255, 255))
-        strip.setColorAt(1.0, QColor(0, 216, 255, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(strip)
-        p.drawRect(QRectF(r, 1, 70, 2))
 
     # ---- акцентные градиенты по периметру, через дуги углов ---------------
     def _edge_gradients(self, p: QPainter, w: int, h: int, r: int) -> None:
