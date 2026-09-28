@@ -34,7 +34,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "1.0.4";
+    const string Version = "1.0.5";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
@@ -67,7 +67,8 @@ static class Setup
 
         try
         {
-            if (HasSwitch("UNINSTALL") || HasSwitch("U"))
+            if (HasSwitch("DELETELATER")) return DeleteLater();
+            if (HasSwitch("UNINSTALL") || HasSwitch("U") || UninstallerNameIsSelf())
             {
                 Log("режим: удаление");
                 return Uninstall();
@@ -136,15 +137,38 @@ static class Setup
         }
     }
 
+    // Ключ есть в командной строке? Учитываем и форму /KEY, и /KEY=значение:
+    // раньше сравнивался весь аргумент целиком, и /DELETELATER=... не
+    // распознавался - помощник удаления молча уходил в режим установки
+    // и висел бесконечно, ничего не удаляя.
     static bool HasSwitch(string name)
     {
         string[] args = Environment.GetCommandLineArgs();
         foreach (string raw in args)
         {
-            string a = raw.Trim().Trim('"').TrimStart('/', '-').ToUpperInvariant();
-            if (a == name.ToUpperInvariant()) return true;
+            string a = raw.Trim().Trim('"').TrimStart('/', '-');
+            int eq = a.IndexOf('=');
+            if (eq >= 0) a = a.Substring(0, eq);
+            if (string.Equals(a, name, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
+    }
+
+    // значение ключа: /KEY=значение или /KEY значение
+    static string SwitchValue(string name)
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string s = args[i].Trim().Trim('"').TrimStart('/', '-');
+            int eq = s.IndexOf('=');
+            string key = eq >= 0 ? s.Substring(0, eq) : s;
+            if (!string.Equals(key, name, StringComparison.OrdinalIgnoreCase)) continue;
+            if (eq >= 0) return s.Substring(eq + 1).Trim().Trim('"');
+            if (i + 1 < args.Length) return args[i + 1].Trim().Trim('"');
+            return "";
+        }
+        return "";
     }
 
     // ---------------------------------------------------------------- требования
@@ -511,7 +535,7 @@ static class Setup
         StopApp();
 
         prog(2, "Проверка предыдущей версии");
-        string oldDir = RegisteredDir();
+        string oldDir = RegisteredDir() ?? string.Empty;
         Log("зарегистрированная папка: " + (oldDir.Length == 0 ? "(нет)" : oldDir));
         Log("целевая папка          : " + TargetDir);
         if (!string.IsNullOrEmpty(oldDir) &&
@@ -828,21 +852,43 @@ static class Setup
 
     static string RegisteredDir()
     {
+        // ВАЖНО: возвращаем пустую строку, а не null.
+        // Раньше здесь возвращался null, и вызывающий код делал oldDir.Length -
+        // на машине, где программа ещё не установлена, установщик падал с
+        // "Ссылка на объект не указывает на экземпляр объекта".
         try
         {
             using (Microsoft.Win32.RegistryKey k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(UnregKey))
             {
-                if (k == null) return null;
-                return k.GetValue("InstallLocation") as string;
+                if (k == null) return string.Empty;
+                return (k.GetValue("InstallLocation") as string) ?? string.Empty;
             }
         }
-        catch { return null; }
+        catch { return string.Empty; }
     }
 
     // ---------------------------------------------------------------- удаление
 
+    // Пользователь запускает uninstall.exe из папки программы без всяких
+    // ключей. Раньше режим определялся только ключом /UNINSTALL, поэтому
+    // двойной клик по uninstall.exe не удалял программу, а устанавливал
+    // её заново. Теперь имя файла тоже считается командой.
+    static bool UninstallerNameIsSelf()
+    {
+        try
+        {
+            string me = Path.GetFileNameWithoutExtension(SelfExe);
+            return string.Equals(me, "uninstall", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+
     static int Uninstall()
     {
+        Log("=== удаление ===");
+        Log("  запущен из : " + SelfExe);
+        Log("  ключ       : /UNINSTALL " + (UninstallerNameIsSelf() ? "(определено по имени файла)" : "(по ключу)"));
+
         // Удалять надо ту папку, где стоит программа, а не ту, откуда запущен
         // установщик: иначе setup.exe /UNINSTALL снёс бы сам себя с папкой dist
         string dir = SelfDir;
@@ -851,48 +897,117 @@ static class Setup
             string reg = RegisteredDir();
             if (!string.IsNullOrEmpty(reg) && File.Exists(Path.Combine(reg, ExeName))) dir = reg;
         }
+        Log("  папка      : " + dir);
+        if (dir != SelfDir) Log("  беру папку из реестра, а не откуда запущен");
 
-        string regDir = RegisteredDir();
         bool silent = Silent;
+        Log("  silent     : " + silent);
 
         if (!silent)
         {
             DialogResult r = Ask(
-                "Удалить " + ProductName + "?\r\n\r\nПрограмма, ярлыки и настройки будут удалены.\r\nПодписки и данные sing-box останутся на диске.",
+                "Удалить " + ProductName + "?\r\n\r\n" +
+                "Будут удалены:\r\n" +
+                "  • программа из папки " + dir + "\r\n" +
+                "  • ярлыки на рабочем столе и в меню «Пуск»\r\n" +
+                "  • запись из «Программы и компоненты»\r\n\r\n" +
+                "Внимание: вместе с папкой удалится сохранённая ссылка на подписку.\r\n" +
+                "После удаления её придётся ввести заново.",
                 "Удаление программы",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-            if (r != DialogResult.Yes) return 0;
+            if (r != DialogResult.Yes) { Log("  пользователь отказался"); return 0; }
         }
 
         StopApp();
+        Log("  программа остановлена");
         string menu = StartMenuDir();
-        try { File.Delete(Path.Combine(DesktopDir(), ShortcutName + ".lnk")); } catch { }
-        try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(UnregKey, false); } catch { }
+        try { File.Delete(Path.Combine(DesktopDir(), ShortcutName + ".lnk")); Log("  ярлык на рабочем столе удалён"); } catch { }
+        try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(UnregKey, false); Log("  запись в реестре удалена"); } catch { }
 
-        if (!Directory.Exists(dir) && !Directory.Exists(menu)) return 0;
+        if (!Directory.Exists(dir) && !Directory.Exists(menu)) { Log("  удалять нечего"); return 0; }
 
-        // папки нельзя удалить, пока из них запущен сам деинсталлятор,
-        // поэтому удаление выполняет отдельная команда после выхода
-        StringBuilder cmds = new StringBuilder();
-        cmds.Append("/c \"timeout /t 2 /nobreak >nul & ");
-        bool first = true;
-        foreach (string d in new string[] { dir, menu })
+        // Папку нельзя удалить, пока из неё запущен сам деинсталлятор, поэтому
+        // удаляет отдельная копия нас самих из %TEMP%, уже после нашего выхода.
+        //
+        // Раньше это была строка cmd с rmdir в цикле, и она была порочной:
+        // цикл жил ~5 секунд и успевал снести папку, если пользователь ставил
+        // программу заново. Здесь всё под контролем - удаляем, пока папка
+        // есть, и сразу выходим, как только её не осталось.
+        string list = dir + "|" + menu;
+        string helper = Path.Combine(Path.GetTempPath(),
+            "vpl-remove-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".exe");
+        try
         {
-            if (!Directory.Exists(d)) continue;
-            if (!first) cmds.Append(" & ");
-            cmds.Append("rmdir /s /q \"").Append(d.TrimEnd('\\')).Append("\"");
-            first = false;
+            File.Copy(SelfExe, helper, true);
+            Process hp = new Process();
+            hp.StartInfo.FileName = helper;
+            hp.StartInfo.Arguments = "/DELETELATER=\"" + list + "\"";
+            hp.StartInfo.UseShellExecute = false;
+            hp.StartInfo.CreateNoWindow = true;
+            hp.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            hp.Start();
+            Log("  удаление папок поручено помощнику " + helper);
         }
-        cmds.Append("\"");
-        if (first) return 0;
+        catch (Exception ex)
+        {
+            Log("  не удалось запустить помощника: " + ex.Message);
+            // крайний случай: пробуем удалить папку обычной командой
+            try { Directory.Delete(dir, true); } catch { }
+            try { if (Directory.Exists(menu)) Directory.Delete(menu, true); } catch { }
+        }
 
-        Process p = new Process();
-        p.StartInfo.FileName = "cmd.exe";
-        p.StartInfo.Arguments = cmds.ToString();
-        p.StartInfo.UseShellExecute = false;
-        p.StartInfo.CreateNoWindow = true;
-        p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-        try { p.Start(); } catch (Exception ex) { Log("удаление папок: " + ex.Message); }
+        return 0;
+    }
+
+    // Запуск из временной копии деинсталлятора: ждём, пока основной процесс
+    // выйдет, и сносим папки. Список папок приходит ключом /DELETELATER.
+    static int DeleteLater()
+    {
+        string list = SwitchValue("DELETELATER");
+        string self = SelfExe;
+        string[] dirs = list.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+        Log("=== помощник удаления ===");
+        Log("  я        : " + self);
+        Log("  папки    : " + string.Join(" ; ", dirs));
+
+        bool left = dirs.Length > 0;
+        for (int attempt = 0; attempt < 20; attempt++)
+        {
+            System.Threading.Thread.Sleep(500);
+            left = false;
+            foreach (string d in dirs)
+            {
+                if (!Directory.Exists(d)) continue;
+                try
+                {
+                    Directory.Delete(d, true);
+                    Log("  удалил   : " + d);
+                }
+                catch (Exception ex)
+                {
+                    left = true;
+                    Log("  не смог  : " + d + "  (" + ex.GetType().Name + ")");
+                }
+            }
+            if (!left) break;
+            if (attempt == 4 || attempt == 9) Log("  ещёtry  : попытка " + (attempt + 1) + ", осталось " + (left ? "да" : "нет"));
+        }
+        Log("  всё удалено: " + (left ? "НЕТ" : "да"));
+
+        // убрать за собой свою временную копию. Ждём подольше и пробуем дважды:
+        // del не может удалить exe, пока он ещё выполняется
+        try
+        {
+            Process p = new Process();
+            p.StartInfo.FileName = "cmd.exe";
+            p.StartInfo.Arguments = "/c \"ping -n 4 127.0.0.1 >nul & del /f /q \"" + self +
+                                    "\" & ping -n 3 127.0.0.1 >nul & del /f /q \"" + self + "\"\"";
+            p.StartInfo.UseShellExecute = false;
+            p.StartInfo.CreateNoWindow = true;
+            p.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+            p.Start();
+        }
+        catch { }
 
         return 0;
     }
@@ -930,21 +1045,47 @@ static class Setup
         // Исключение глоталось, программа оставалась жить, держала свой
         // exe, и установка обрывалась на середине. Поэтому путь читаем
         // только для информации, а Kill() делаем всегда.
+        //
+        // Останавливаем не только VPNLauncher, но и наш деинсталлятор,
+        // если он запущен из целевой папки: он тоже держит свой файл,
+        // и следующая установка падала бы с "файл используется другим
+        // процессом". Себя самого не трогаем.
+        int me = Process.GetCurrentProcess().Id;
+        string target = "";
+        try { target = new DirectoryInfo(TargetDir).FullName.TrimEnd('\\'); } catch { }
+
         try
         {
-            foreach (Process p in Process.GetProcessesByName("VPNLauncher"))
+            foreach (string name in new string[] { "VPNLauncher", "uninstall" })
             {
-                string path = "?";
-                try { path = p.MainModule.FileName; } catch { }
-                Log("останавливаю процесс VPNLauncher pid " + p.Id + " (" + path + ")");
-                try { p.CloseMainWindow(); } catch { }
-                try { p.WaitForExit(1500); } catch { }
-                if (!HasExited(p))
+                foreach (Process p in Process.GetProcessesByName(name))
                 {
-                    try { p.Kill(); Log("  принудительно остановлен"); }
-                    catch (Exception ex) { Log("  не удалось остановить: " + ex.Message); }
+                    if (p.Id == me) continue;
+
+                    string path = "?";
+                    bool inTarget = false;
+                    try
+                    {
+                        path = p.MainModule.FileName;
+                        inTarget = target.Length > 0 &&
+                            path.StartsWith(target, StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch { }
+
+                    // VPNLauncher останавливаем всегда (может быть повышенным),
+                    // а uninstall.exe - только когда он лежит в целевой папке
+                    if (name == "uninstall" && !inTarget) continue;
+
+                    Log("останавливаю процесс " + name + " pid " + p.Id + " (" + path + ")");
+                    try { p.CloseMainWindow(); } catch { }
+                    try { p.WaitForExit(1500); } catch { }
+                    if (!HasExited(p))
+                    {
+                        try { p.Kill(); Log("  принудительно остановлен"); }
+                        catch (Exception ex) { Log("  не удалось остановить: " + ex.Message); }
+                    }
+                    try { p.WaitForExit(3000); } catch { }
                 }
-                try { p.WaitForExit(3000); } catch { }
             }
         }
         catch (Exception ex) { Log("StopApp: " + ex.Message); }
@@ -952,10 +1093,30 @@ static class Setup
         // ждём, пока Windows реально отпустит exe, иначе копирование падает
         for (int i = 0; i < 30; i++)
         {
-            if (!IsAppRunning()) return;
+            if (!IsAppRunning() && !IsUninstallerRunning(target, me)) return;
             System.Threading.Thread.Sleep(200);
         }
-        Log("предупреждение: VPNLauncher всё ещё работает после остановки");
+        Log("предупреждение: программа всё ещё работает после остановки");
+    }
+
+    static bool IsUninstallerRunning(string target, int me)
+    {
+        try
+        {
+            if (target.Length == 0) return false;
+            foreach (Process p in Process.GetProcessesByName("uninstall"))
+            {
+                if (p.Id == me) continue;
+                try
+                {
+                    if (p.HasExited) continue;
+                    if (p.MainModule.FileName.StartsWith(target, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+        catch { return false; }
     }
 
     static bool HasExited(Process p)
@@ -1283,10 +1444,16 @@ static class Setup
                     bar.Value = Math.Max(0, Math.Min(100, pct));
                     Application.DoEvents();
                 });
+                Log("RunInstall вернул " + code);
             }
             catch (Exception ex)
             {
-                Error("Установка не завершена", ex.Message);
+                // раньше здесь ошибка показывалась пользователю, но не писалась
+                // в лог, и причину было невозможно понять
+                Log("ОШИБКА УСТАНОВКИ (окно): " + ex.GetType().Name + ": " + ex.Message);
+                Log("  стек: " + ex.StackTrace);
+                Error("Установка не завершена", ex.Message + Environment.NewLine + Environment.NewLine +
+                      "Подробности в файле: " + LogPath());
             }
 
             if (code == 0)
