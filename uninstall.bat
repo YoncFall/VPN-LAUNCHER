@@ -20,7 +20,9 @@ if errorlevel 2 (
 if exist "%LNK%" del /f /q "%LNK%" >nul 2>&1
 if exist "%SM%" del /f /q "%SM%" >nul 2>&1
 
-taskkill /F /IM sing-box.exe >nul 2>&1
+rem --- stop only OUR processes (exact exe path inside app folder) ---
+powershell -NoProfile -Command "Get-Process VPNLauncher,sing-box -ErrorAction SilentlyContinue | Where-Object { $_.Path -ieq '%DEST%\VPNLauncher.exe' -or $_.Path -ieq '%DEST%\sing-box.exe' } | Stop-Process -Force -ErrorAction SilentlyContinue" >nul 2>&1
+
 reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /f >nul 2>&1
 
 if exist "%DEST%" rd /s /q "%DEST%" >nul 2>&1
