@@ -38,6 +38,7 @@ if exist "%SRC%\src\MyVPN.cmd" copy /Y "%SRC%\src\MyVPN.cmd" "%DEST%\MyVPN.cmd" 
 if exist "%SRC%\README.md" copy /Y "%SRC%\README.md" "%DEST%\README.md" >nul
 if exist "%SRC%\LICENSE" copy /Y "%SRC%\LICENSE" "%DEST%\LICENSE" >nul
 if exist "%SRC%\NOTICE.md" copy /Y "%SRC%\NOTICE.md" "%DEST%\NOTICE.md" >nul
+if exist "%SRC%\SING-BOX-LICENSE.txt" copy /Y "%SRC%\SING-BOX-LICENSE.txt" "%DEST%\SING-BOX-LICENSE.txt" >nul
 
 if not exist "%DEST%\MyVPN.cmd" (
   echo   ERROR: launcher MyVPN.cmd was not installed.
