@@ -1,0 +1,132 @@
+{
+    "log":  {
+                "level":  "info",
+                "timestamp":  true
+            },
+    "dns":  {
+                "servers":  [
+                                {
+                                    "tag":  "dns-local",
+                                    "type":  "local"
+                                },
+                                {
+                                    "tag":  "dns-out",
+                                    "type":  "udp",
+                                    "server":  "1.1.1.1",
+                                    "server_port":  53
+                                }
+                            ],
+                "final":  "dns-out"
+            },
+    "inbounds":  [
+                     {
+                         "type":  "tun",
+                         "tag":  "tun-in",
+                         "interface_name":  "vpn-launcher-tun",
+                         "address":  [
+                                         "172.19.0.1/30",
+                                         "fdfe:dcba:9876::1/126"
+                                     ],
+                         "mtu":  1500,
+                         "auto_route":  true,
+                         "strict_route":  true,
+                         "stack":  "mixed"
+                     }
+                 ],
+    "outbounds":  [
+                      {
+                          "type":  "vmess",
+                          "tag":  "node-7",
+                          "server":  "vmess-bare.example.com",
+                          "server_port":  2053,
+                          "uuid":  "66666666-6666-6666-6666-666666666666",
+                          "alter_id":  1,
+                          "transport":  {
+                                            "type":  "ws",
+                                            "path":  "/bare",
+                                            "headers":  {
+                                                            "Host":  "bare-cdn.example.com"
+                                                        }
+                                        }
+                      },
+                      {
+                          "type":  "direct",
+                          "tag":  "direct"
+                      },
+                      {
+                          "type":  "selector",
+                          "tag":  "proxy-group",
+                          "outbounds":  [
+                                            "node-7"
+                                        ],
+                          "default":  "node-7",
+                          "interrupt_exist_connections":  true
+                      }
+                  ],
+    "route":  {
+                  "rules":  [
+                                {
+                                    "action":  "sniff"
+                                },
+                                {
+                                    "protocol":  "dns",
+                                    "action":  "hijack-dns"
+                                },
+                                {
+                                    "action":  "route",
+                                    "process_name":  [
+                                                         "steam.exe",
+                                                         "steamwebhelper.exe",
+                                                         "steamservice.exe",
+                                                         "steamerrorreporter.exe",
+                                                         "gameoverlayui64.exe",
+                                                         "RustClient.exe",
+                                                         "Rust.exe",
+                                                         "UnityCrashHandler64.exe",
+                                                         "EasyAntiCheat.exe",
+                                                         "EasyAntiCheat_EOS.exe",
+                                                         "EasyAntiCheat_Setup.exe",
+                                                         "EACLauncher.exe",
+                                                         "DayZ_x64.exe",
+                                                         "DayZDiag_x64.exe",
+                                                         "DayZLauncher.exe",
+                                                         "DayZ_BE.exe",
+                                                         "BEService_x64.exe",
+                                                         "DayZServer_x64.exe",
+                                                         "Phasmophobia.exe",
+                                                         "REPO.exe",
+                                                         "ONCE_HUMAN.exe",
+                                                         "GTA5.exe",
+                                                         "GTA5_3258.exe",
+                                                         "ragemp_v.exe",
+                                                         "cs2.exe"
+                                                     ],
+                                    "outbound":  "direct"
+                                },
+                                {
+                                    "action":  "route",
+                                    "ip_cidr":  [
+                                                    "127.0.0.0/8",
+                                                    "10.0.0.0/8",
+                                                    "172.16.0.0/12",
+                                                    "192.168.0.0/16",
+                                                    "224.0.0.0/4",
+                                                    "fe80::/10",
+                                                    "fc00::/7"
+                                                ],
+                                    "outbound":  "direct"
+                                }
+                            ],
+                  "auto_detect_interface":  true,
+                  "default_domain_resolver":  {
+                                                  "server":  "dns-local"
+                                              },
+                  "final":  "proxy-group"
+              },
+    "experimental":  {
+                         "cache_file":  {
+                                            "enabled":  true,
+                                            "path":  "vpn-golden-root\\cache.db"
+                                        }
+                     }
+}

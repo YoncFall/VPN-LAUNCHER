@@ -1,0 +1,140 @@
+{
+    "log":  {
+                "level":  "info",
+                "timestamp":  true
+            },
+    "dns":  {
+                "servers":  [
+                                {
+                                    "tag":  "dns-local",
+                                    "type":  "local"
+                                },
+                                {
+                                    "tag":  "dns-out",
+                                    "type":  "udp",
+                                    "server":  "1.1.1.1",
+                                    "server_port":  53
+                                }
+                            ],
+                "final":  "dns-out"
+            },
+    "inbounds":  [
+                     {
+                         "type":  "socks",
+                         "tag":  "socks-in",
+                         "listen":  "127.0.0.1",
+                         "listen_port":  20808
+                     },
+                     {
+                         "type":  "http",
+                         "tag":  "http-in",
+                         "listen":  "127.0.0.1",
+                         "listen_port":  20809
+                     }
+                 ],
+    "outbounds":  [
+                      {
+                          "type":  "vless",
+                          "tag":  "node-1",
+                          "server":  "vless-ws.example.com",
+                          "server_port":  443,
+                          "uuid":  "11111111-1111-1111-1111-111111111111",
+                          "tls":  {
+                                      "enabled":  true,
+                                      "server_name":  "vless-ws.example.com",
+                                      "utls":  {
+                                                   "fingerprint":  "chrome",
+                                                   "enabled":  true
+                                               },
+                                      "alpn":  [
+                                                   "h2",
+                                                   "http/1.1"
+                                               ]
+                                  },
+                          "transport":  {
+                                            "type":  "ws",
+                                            "path":  "/ws",
+                                            "headers":  {
+                                                            "Host":  "cdn.example.com"
+                                                        }
+                                        }
+                      },
+                      {
+                          "type":  "shadowsocks",
+                          "tag":  "node-8",
+                          "server":  "ss-userinfo.example.com",
+                          "server_port":  8388,
+                          "password":  "ss-password",
+                          "method":  "aes-256-gcm"
+                      },
+                      {
+                          "type":  "tuic",
+                          "tag":  "node-16",
+                          "server":  "tuic.example.com",
+                          "server_port":  443,
+                          "uuid":  "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                          "password":  "tuic-pass",
+                          "congestion_control":  "cubic",
+                          "tls":  {
+                                      "server_name":  "tuic.example.com",
+                                      "alpn":  [
+                                                   "h3"
+                                               ],
+                                      "insecure":  true,
+                                      "enabled":  true
+                                  }
+                      },
+                      {
+                          "type":  "direct",
+                          "tag":  "direct"
+                      },
+                      {
+                          "type":  "urltest",
+                          "tag":  "proxy-group",
+                          "outbounds":  [
+                                            "node-1",
+                                            "node-8",
+                                            "node-16"
+                                        ],
+                          "url":  "https://www.gstatic.com/generate_204",
+                          "interval":  "10m",
+                          "tolerance":  50,
+                          "interrupt_exist_connections":  true
+                      }
+                  ],
+    "route":  {
+                  "rules":  [
+                                {
+                                    "action":  "sniff"
+                                },
+                                {
+                                    "protocol":  "dns",
+                                    "action":  "hijack-dns"
+                                },
+                                {
+                                    "action":  "route",
+                                    "ip_cidr":  [
+                                                    "127.0.0.0/8",
+                                                    "10.0.0.0/8",
+                                                    "172.16.0.0/12",
+                                                    "192.168.0.0/16",
+                                                    "224.0.0.0/4",
+                                                    "fe80::/10",
+                                                    "fc00::/7"
+                                                ],
+                                    "outbound":  "direct"
+                                }
+                            ],
+                  "auto_detect_interface":  true,
+                  "default_domain_resolver":  {
+                                                  "server":  "dns-local"
+                                              },
+                  "final":  "proxy-group"
+              },
+    "experimental":  {
+                         "cache_file":  {
+                                            "enabled":  true,
+                                            "path":  "vpn-golden-root\\cache.db"
+                                        }
+                     }
+}

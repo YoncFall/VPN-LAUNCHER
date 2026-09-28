@@ -1,0 +1,23 @@
+vless://11111111-1111-1111-1111-111111111111@vless-ws.example.com:443?security=tls&sni=vless-ws.example.com&fp=chrome&alpn=h2%2Chttp%2F1.1&type=ws&path=%2Fws&host=cdn.example.com#VLESS-WS-TLS
+vless://22222222-2222-2222-2222-222222222222@reality.example.com:8443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo&sid=a1b2c3d4&flow=xtls-rprx-vision#VLESS-Reality
+vless://33333333-3333-3333-3333-333333333333@plain-tcp.example.com:8080#%D0%A1%D0%B5%D1%80%D0%B2%D0%B5%D1%80%20VLESS
+vless://77777777-7777-7777-7777-777777777777@up.example.com:443?type=httpupgrade&path=%2Fup&host=up.example.com#VLESS-HttpUpgrade
+vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MtV1MiLCJhZGQiOiJ2bWVzcy13cy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjQ0NDQ0NDQ0LTQ0NDQtNDQ0NC00NDQ0LTQ0NDQ0NDQ0NDQ0NCIsImFpZCI6IjAiLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0eXBlIjoibm9uZSIsImhvc3QiOiJjZG4uZXhhbXBsZS5jb20iLCJwYXRoIjoiL3ZtZXNzLXdzIiwidGxzIjoiIn0=
+vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MtVExTIiwiYWRkIjoidm1lc3MtdGxzLmV4YW1wbGUuY29tIiwicG9ydCI6ODQ0MywiaWQiOiI1NTU1NTU1NS01NTU1LTU1NTUtNTU1NS01NTU1NTU1NTU1NTUiLCJhaWQiOiIyIiwibmV0Ijoid3MiLCJob3N0Ijoic2VjdXJlLmV4YW1wbGUuY29tIiwicGF0aCI6Ii93czIiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ2bWVzcy10bHMuZXhhbXBsZS5jb20iLCJmcCI6ImNocm9tZSIsImFscG4iOiJoMiJ9
+vmess://eyJwcyI6IlZNZXNzLUJhcmUiLCJhZGQiOiJ2bWVzcy1iYXJlLmV4YW1wbGUuY29tIiwicG9ydCI6IjIwNTMiLCJpZCI6IjY2NjY2NjY2LTY2NjYtNjY2Ni02NjY2LTY2NjY2NjY2NjY2NiIsImFpZCI6IjEiLCJuZXQiOiJ3cyIsImhvc3QiOiJiYXJlLWNkbi5leGFtcGxlLmNvbSIsInBhdGgiOiIvYmFyZSJ9
+ss://YWVzLTI1Ni1nY206c3MtcGFzc3dvcmQ=@ss-userinfo.example.com:8388#SS-Userinfo
+ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpzczJwYXNzQHNzLWJvZHkuZXhhbXBsZS5jb206ODM4OQ==?plugin=obfs-local&plugin-opts=example.com#SS-Body-Obfs
+ss://aes-128-gcm:ss3pass@ss-raw.example.com:8390#SS-Raw
+ss://YWVzLTI1Ni1nY206c3M0cGFzcw==@ss-v2.example.com:8391?plugin=v2ray-plugin;mode=websocket#SS-V2Ray
+trojan://trojan-pass@trojan-grpc.example.com:443?security=tls&sni=trojan-grpc.example.com&type=grpc&serviceName=trojan-grpc&alpn=h2#Trojan-Grpc
+trojan://plain-pass@trojan-plain.example.com:443#Trojan-Plain
+hysteria2://hy2-pass@hy2.example.com:8443?sni=hy2.example.com&insecure=1&alpn=h3&obfs=salamander&obfs-password=obfs-secret#HY2-Obfs
+hy2://hy2-plain.example.com:443#HY2-Plain
+tuic://6ba7b810-9dad-11d1-80b4-00c04fd430c8:tuic-pass@tuic.example.com:443?congestion_control=cubic&sni=tuic.example.com&insecure=true&alpn=h3#TUIC-Cubic
+# сломанные и отброшенные схемы (индексы строк всё равно считаются):
+vless://missing-at-sign#Broken-VLESS
+wireguard://wg.example.com#Ignored-Unknown
+http://example.com:8080#Ignored-HTTP
+socks://user:pass@socks.example.com:1080#Ignored-Socks
+
+# подписка-пример: комментарии и пустые строки отбрасываются
