@@ -34,9 +34,21 @@ if not exist "%DEST%" (
 
 xcopy "%SRC%\src" "%DEST%\src\" /E /I /Y /Q >nul
 if exist "%SRC%\bin\sing-box.exe" copy /Y "%SRC%\bin\sing-box.exe" "%DEST%\sing-box.exe" >nul
-if exist "%SRC%\MyVPN.cmd" copy /Y "%SRC%\MyVPN.cmd" "%DEST%\MyVPN.cmd" >nul
+if exist "%SRC%\src\MyVPN.cmd" copy /Y "%SRC%\src\MyVPN.cmd" "%DEST%\MyVPN.cmd" >nul
 if exist "%SRC%\README.md" copy /Y "%SRC%\README.md" "%DEST%\README.md" >nul
 if exist "%SRC%\LICENSE" copy /Y "%SRC%\LICENSE" "%DEST%\LICENSE" >nul
+if exist "%SRC%\NOTICE.md" copy /Y "%SRC%\NOTICE.md" "%DEST%\NOTICE.md" >nul
+
+if not exist "%DEST%\MyVPN.cmd" (
+  echo   ERROR: launcher MyVPN.cmd was not installed.
+  pause
+  exit /b 1
+)
+if not exist "%DEST%\sing-box.exe" (
+  echo   ERROR: sing-box.exe was not installed.
+  pause
+  exit /b 1
+)
 
 echo   Files copied.
 echo.
