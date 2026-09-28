@@ -186,10 +186,10 @@ class MainWindow(QWidget):
         self.lbl_status = _label(
             card,
             "Готов - оболочка, логика на этапах 2-5",
-            36, 634, 250, 18, theme.TEXT, theme.f_body(),
+            36, 636, 250, 18, theme.TEXT, theme.f_body(),
         )
         self.lbl_egress = _label(
-            card, "", 300, 634, 274, 18, theme.TEXT_DIM, theme.f_mono(), "right"
+            card, "", 300, 636, 274, 18, theme.TEXT_DIM, theme.f_mono(), "right"
         )
 
     # ---- behavior --------------------------------------------------------
