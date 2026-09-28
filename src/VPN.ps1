@@ -27,6 +27,7 @@ $script:State = Get-VpnState
 $script:Proc = $null
 $script:Nodes = @()
 $script:Busy = $false
+$script:Ping = @{}   # тема читает его при отрисовке списка, должно существовать с самого старта
 
 $identGlobal = [Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmGlobal = (New-Object Security.Principal.WindowsPrincipal($identGlobal)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)

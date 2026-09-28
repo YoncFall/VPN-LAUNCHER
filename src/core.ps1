@@ -512,9 +512,11 @@ function New-SingBoxConfig {
     [void]$rules.Add([ordered]@{ protocol = 'dns'; action = 'hijack-dns' })
 
     # per-app: перечисленные приложения идут НАПРЯМУЮ (важно для игр/античита)
+    # action обязателен с sing-box 1.11, outbound внутри правила помечен deprecated
     $directApps = @(($GameSafeProcesses + $AppList) | Where-Object { $_ } | Select-Object -Unique)
     if ($Mode -eq 'tun' -and $directApps.Count -gt 0) {
         [void]$rules.Add([ordered]@{
+            action = 'route'
             process_name = $directApps
             outbound = 'direct'
         })
@@ -523,6 +525,7 @@ function New-SingBoxConfig {
 
     # локальные сети идём напрямую (в TUN это обязательно)
     [void]$rules.Add([ordered]@{
+        action = 'route'
         ip_cidr = @('127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '224.0.0.0/4', 'fe80::/10', 'fc00::/7')
         outbound = 'direct'
     })
