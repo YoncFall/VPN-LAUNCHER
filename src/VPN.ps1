@@ -3,13 +3,21 @@
 
 param([switch]$Autoconnect)
 
-. (Join-Path $PSScriptRoot 'core.ps1')
+# core.ps1 и theme.ps1 лежат либо рядом со скриптом (раскладка установщика),
+# либо в src\ (раскладка zip-архива и install.bat) - ищем оба места.
+$__core = Join-Path $PSScriptRoot 'core.ps1'
+if (-not (Test-Path $__core)) { $__core = Join-Path (Join-Path $PSScriptRoot 'src') 'core.ps1' }
+. $__core
+Remove-Variable __core
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
-. (Join-Path $PSScriptRoot 'theme.ps1')
+$__theme = Join-Path $PSScriptRoot 'theme.ps1'
+if (-not (Test-Path $__theme)) { $__theme = Join-Path (Join-Path $PSScriptRoot 'src') 'theme.ps1' }
+. $__theme
+Remove-Variable __theme
 
 # Ошибки в обработчиках не должны вешать окно модальным диалогом - логируем и показываем в статусе
 [System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)

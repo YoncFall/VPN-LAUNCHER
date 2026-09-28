@@ -4,9 +4,16 @@
 Set-StrictMode -Off
 $ErrorActionPreference = 'Stop'
 
-# Скрипты лежат в <install>\src, движок и данные - на уровень выше
-$script:InstallRoot = Split-Path -Parent $PSScriptRoot
+# Раскладка бывает двух видов:
+#   - плоско, как ставит установщик: скрипты и sing-box.exe в одной папке;
+#   - <install>\src + данные уровнем выше, как устроен zip-архив.
+# Корень данных ищется рядом со скриптами (где лежит движок), иначе - уровнем выше.
 $script:VpnRoot = $PSScriptRoot
+if (Test-Path (Join-Path $PSScriptRoot 'sing-box.exe')) {
+    $script:InstallRoot = $PSScriptRoot
+} else {
+    $script:InstallRoot = Split-Path -Parent $PSScriptRoot
+}
 $script:SingBox = Join-Path $script:InstallRoot 'sing-box.exe'
 $script:StateFile = Join-Path $script:InstallRoot 'state.json'
 $script:ConfigFile = Join-Path $script:InstallRoot 'config.json'
