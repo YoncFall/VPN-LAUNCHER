@@ -24,6 +24,14 @@ function Read-VpnScriptText([string]$name) {
     }
     return $txt
 }
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+# важен порядок: сборки должны быть загружены до theme.ps1 - тот строит
+# палитру [System.Drawing.Color] прямо при загрузке
 $__core = Read-VpnScriptText 'core.ps1'
 . ([scriptblock]::Create($__core))
 Remove-Variable __core
@@ -31,11 +39,6 @@ $__theme = Read-VpnScriptText 'theme.ps1'
 . ([scriptblock]::Create($__theme))
 Remove-Variable __theme
 Remove-Item Function:\Read-VpnScriptText -ErrorAction SilentlyContinue
-
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-[System.Windows.Forms.Application]::EnableVisualStyles()
 
 # Ошибки в обработчиках не должны вешать окно модальным диалогом - логируем и показываем в статусе
 [System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
