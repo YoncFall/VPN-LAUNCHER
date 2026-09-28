@@ -4,7 +4,8 @@
 - фон-градиент (20,24,33) -> (12,14,19);
 - нижняя граница Line на y=45;
 - левый кант 3px: градиент Accent -> AccentD;
-- градиентная подчёркивающая линия x=3..40% ширины, y=44, a=130 -> 0;
+- градиентная подчёркивающая линия x=3..40% ширины, y=44 - УБРАНА по просьбе
+  (синий штрих под шапкой больше не рисуется);
 - логотип 'VPN ЛАУНЧЕР' (FLogo 17 Bold): слой свечения (0,180,215,a=110)
   со смещением (+1,+1) + основной текст Accent;
 - 'by @YoncFALL' (FSub) TextDim справа от логотипа;
@@ -81,14 +82,6 @@ class TitleBar(QWidget):
         edge.setColorAt(1.0, theme.ACCENT_D)
         p.setPen(Qt.PenStyle.NoPen)
         p.fillRect(QRectF(0, 0, 3, h), edge)
-
-        # градиентный штрих по низу (a=130 -> 0 к 40% ширины)
-        w40 = int(w * 0.4)
-        if w40 > 3:
-            line = QLinearGradient(QPointF(3, 0), QPointF(w40, 0))
-            line.setColorAt(0.0, QColor(0, 216, 255, 130))
-            line.setColorAt(1.0, QColor(0, 216, 255, 0))
-            p.fillRect(QRectF(3, h - 2, w40 - 3, 1), line)
 
         # логотип: свечение + основной текст
         p.setFont(theme.f_logo())
