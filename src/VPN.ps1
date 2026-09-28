@@ -5,19 +5,34 @@ param([switch]$Autoconnect)
 
 # core.ps1 и theme.ps1 лежат либо рядом со скриптом (раскладка установщика),
 # либо в src\ (раскладка zip-архива и install.bat) - ищем оба места.
-$__core = Join-Path $PSScriptRoot 'core.ps1'
-if (-not (Test-Path $__core)) { $__core = Join-Path (Join-Path $PSScriptRoot 'src') 'core.ps1' }
-. $__core
+# Грузим их ТЕКСТОМ в память, а не dot-source'ом файла: dot-source файла
+# зависит от политики выполнения сценариев, а на чистой Windows она
+# Restricted, и ранее запуск падал с ошибкой "выполнение сценариев отключено".
+function Read-VpnScriptText([string]$name) {
+    $p = Join-Path $PSScriptRoot $name
+    if (-not (Test-Path $p)) { $p = Join-Path (Join-Path $PSScriptRoot 'src') $name }
+    if (-not (Test-Path $p)) { throw "Не найден $name рядом с программой или в src\" }
+    $txt = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
+    # у скрипта, загруженного текстом, $PSScriptRoot не определён -
+    # подставляем свой, как это делает хост (VPNLauncher.exe)
+    if ($PSScriptRoot) {
+        $root = "'" + $PSScriptRoot.Replace("'", "''") + "'"
+        $txt = $txt.Replace('$PSScriptRoot', $root)
+    }
+    return $txt
+}
+$__core = Read-VpnScriptText 'core.ps1'
+. ([scriptblock]::Create($__core))
 Remove-Variable __core
+$__theme = Read-VpnScriptText 'theme.ps1'
+. ([scriptblock]::Create($__theme))
+Remove-Variable __theme
+Remove-Item Function:\Read-VpnScriptText -ErrorAction SilentlyContinue
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$__theme = Join-Path $PSScriptRoot 'theme.ps1'
-if (-not (Test-Path $__theme)) { $__theme = Join-Path (Join-Path $PSScriptRoot 'src') 'theme.ps1' }
-. $__theme
-Remove-Variable __theme
 
 # Ошибки в обработчиках не должны вешать окно модальным диалогом - логируем и показываем в статусе
 [System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
