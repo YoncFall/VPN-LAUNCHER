@@ -6,19 +6,27 @@
 - рамка Line (46,52,68), радиус 14;
 - акцентная полоска сверху: x=radius..radius+70, h=2, градиент Accent a=255 -> a=0.
 
-Визуальное отклонение (просьба, скриншот «интерфейс градиент»): по четырём
-ребрам рамки идут акцентные градиенты - яркие в правом верхнем и левом нижнем
-углах, гаснут вдоль направлений: верх влево, право вниз, низ вправо, лево вверх.
+Визуальное отклонение (просьба, скриншот «интерфейс градиент»): по рамке идут
+акцентные градиенты - ярче всего правый верхний и левый нижний углы; линии
+проходят через скругления углов (полукруги доведены по просьбе) и гаснут
+вдоль рёбер: верх влево, право вниз, низ вправо, лево вверх.
 """
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+)
 from PySide6.QtWidgets import QWidget
 
 from vpn_launcher.ui import theme
 
-_EDGE_ALPHA = 180  # яркость акцента в «светлых» углах
+_EDGE_ALPHA = 215  # яркость акцента в светлых углах (было 180, стало чуть ярче)
 
 
 class GameCard(QWidget):
@@ -49,19 +57,7 @@ class GameCard(QWidget):
         p.setPen(QPen(theme.LINE, 1))
         p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), r, r)
 
-        # акцентные градиенты по рёбрам: начало (яркое) -> конец (прозрачный)
-        edges = [
-            (float(w - r), 1.0, float(r), 1.0),  # верх: правый угол -> влево
-            (float(w - 1), float(r), float(w - 1), float(h - r)),  # право: вниз
-            (float(r), float(h - 1), float(w - r), float(h - 1)),  # низ: вправо
-            (1.0, float(h - r), 1.0, float(r)),  # лево: нижний угол -> вверх
-        ]
-        for x0, y0, x1, y1 in edges:
-            g = QLinearGradient(QPointF(x0, y0), QPointF(x1, y1))
-            g.setColorAt(0.0, QColor(0, 216, 255, _EDGE_ALPHA))
-            g.setColorAt(1.0, QColor(0, 216, 255, 0))
-            p.setPen(QPen(QBrush(g), 1))
-            p.drawLine(QPointF(x0, y0), QPointF(x1, y1))
+        self._edge_gradients(p, w, h, r)
 
         # акцентная полоска сверху (theme.ps1:1122-1126)
         strip = QLinearGradient(QPointF(r, 0), QPointF(r + 70, 0))
@@ -70,3 +66,53 @@ class GameCard(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(strip)
         p.drawRect(QRectF(r, 1, 70, 2))
+
+    # ---- акцентные градиенты по периметру, через дуги углов ---------------
+    def _edge_gradients(self, p: QPainter, w: int, h: int, r: int) -> None:
+        L, T = 1.0, 1.0
+        R, B = float(w - 1), float(h - 1)
+        tl = QRectF(L, T, 2 * r, 2 * r)
+        tr = QRectF(R - 2 * r, T, 2 * r, 2 * r)
+        bl = QRectF(L, B - 2 * r, 2 * r, 2 * r)
+
+        # верх: дуга TL + прямая + дуга TR; слева прозрачный -> справа яркий
+        top = QPainterPath()
+        top.moveTo(L, T + r)
+        top.arcTo(tl, 180, -90)
+        top.lineTo(R - r, T)
+        top.arcTo(tr, 90, -90)
+        g_top = QLinearGradient(QPointF(L, T), QPointF(R, T))
+        g_top.setColorAt(0.0, QColor(0, 216, 255, 0))
+        g_top.setColorAt(1.0, QColor(0, 216, 255, _EDGE_ALPHA))
+
+        # право: сверху яркий -> снизу прозрачный
+        right = QPainterPath()
+        right.moveTo(R, T + r)
+        right.lineTo(R, B - r)
+        g_right = QLinearGradient(QPointF(R, T), QPointF(R, B))
+        g_right.setColorAt(0.0, QColor(0, 216, 255, _EDGE_ALPHA))
+        g_right.setColorAt(1.0, QColor(0, 216, 255, 0))
+
+        # низ: дуга BL + прямая; слева яркий -> справа прозрачный
+        bottom = QPainterPath()
+        bottom.moveTo(L, B - r)
+        bottom.arcTo(bl, 180, 90)
+        bottom.lineTo(R - r, B)
+        g_bot = QLinearGradient(QPointF(R, B), QPointF(L, B))
+        g_bot.setColorAt(0.0, QColor(0, 216, 255, 0))
+        g_bot.setColorAt(1.0, QColor(0, 216, 255, _EDGE_ALPHA))
+
+        # лево: снизу яркий -> сверху прозрачный
+        left = QPainterPath()
+        left.moveTo(L, B - r)
+        left.lineTo(L, T + r)
+        g_left = QLinearGradient(QPointF(L, B), QPointF(L, T))
+        g_left.setColorAt(0.0, QColor(0, 216, 255, _EDGE_ALPHA))
+        g_left.setColorAt(1.0, QColor(0, 216, 255, 0))
+
+        for path, g in ((top, g_top), (right, g_right), (bottom, g_bot), (left, g_left)):
+            pen = QPen(QBrush(g), 1)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            p.drawPath(path)
