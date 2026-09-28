@@ -47,7 +47,7 @@ $script:ExHandler = [System.Threading.ThreadExceptionEventHandler] {
     Write-VpnLog ('UI ERROR: ' + $e.Exception.Message)
     try {
         $script:Status.Text = 'Внутренняя ошибка (см. лог)'
-        $script:Status.ForeColor = [System.Drawing.Color]::Salmon
+        $script:Status.ForeColor = $script:Pal.Danger
     } catch { }
 }
 [System.Windows.Forms.Application]::add_ThreadException($script:ExHandler)
@@ -94,37 +94,7 @@ $form.Add_Paint({
     $br.Dispose()
 })
 
-function Add-Label($t, $x, $y, $w) {
-    $l = New-Object System.Windows.Forms.Label
-    $l.Text = $t
-    $l.Location = New-Object System.Drawing.Point($x, $y)
-    $l.Size = New-Object System.Drawing.Size($w, 18)
-    $l.ForeColor = [System.Drawing.Color]::Gainsboro
-    $form.Controls.Add($l)
-    return $l
-}
-function Add-TextBox($x, $y, $w, $text) {
-    $t = New-Object System.Windows.Forms.TextBox
-    $t.Location = New-Object System.Drawing.Point($x, $y)
-    $t.Size = New-Object System.Drawing.Size($w, 26)
-    $t.Text = $text
-    $t.BackColor = [System.Drawing.Color]::FromArgb(45, 48, 54)
-    $t.ForeColor = [System.Drawing.Color]::White
-    $t.BorderStyle = 'FixedSingle'
-    $form.Controls.Add($t)
-    return $t
-}
-function Add-Button($t, $x, $y, $w, $h, $color) {
-    $b = New-Object System.Windows.Forms.Button
-    $b.Text = $t
-    $b.Location = New-Object System.Drawing.Point($x, $y)
-    $b.Size = New-Object System.Drawing.Size($w, $h)
-    $b.FlatStyle = 'Flat'
-    $b.BackColor = $color
-    $b.ForeColor = [System.Drawing.Color]::White
-    $form.Controls.Add($b)
-    return $b
-}
+
 
 function Format-NodeRow($n) {
     # протокол и пинг рисует сам список отдельными колонками,
@@ -132,12 +102,21 @@ function Format-NodeRow($n) {
     return [string]$n['display']
 }
 
-New-GameCaption 'ПОДПИСКА' 16 62 300 | ForEach-Object { $form.Controls.Add($_) }
-$txtSub = New-GameTextBox 16 80 588 30 $script:State.subUrl
-$form.Controls.Add($txtSub)
+# ---------------- карточка интерфейса ----------------
+# Вся раскладка живёт на одной скруглённой карточке поверх градиентного фона.
+$card = New-GameCard 14 54 592 664 14
+$form.Controls.Add($card)
 
-$btnLoad = New-GameButton 'Загрузить подписку' 16 118 200 36 'ghost'
-$form.Controls.Add($btnLoad)
+New-GameCaption 'ПОДПИСКА' 18 12 300 | ForEach-Object { $card.Controls.Add($_) }
+$txtSub = New-GameField 18 30 556 30 $script:State.subUrl
+$txtSub.Placeholder = 'вставь ссылку на подписку (https://...)'
+$card.Controls.Add($txtSub)
+
+$btnLoad = New-GameButton 'Загрузить подписку' 18 66 208 34 'ghost'
+$btnPing = New-GameButton 'Проверить пинг' 232 66 150 34 'ghost'
+$btnLog = New-GameButton 'Открыть лог' 388 66 168 34 'ghost'
+foreach ($b in @($btnLoad, $btnPing, $btnLog)) { $card.Controls.Add($b) }
+
 $btnLoad.Add_Click({
     if ($script:Busy) { return }
     $url = $script:UrlBox.Text.Trim()
@@ -161,85 +140,86 @@ $btnLoad.Add_Click({
         }
         $script:List.EndUpdate()
         $script:Status.Text = ('Серверов загружено: {0}' -f $script:Nodes.Count)
-        $script:Status.ForeColor = [System.Drawing.Color]::LightGreen
+        $script:Status.ForeColor = $script:Pal.Accent2
     } catch {
         $script:Status.Text = 'Ошибка загрузки'
-        $script:Status.ForeColor = [System.Drawing.Color]::Salmon
+        $script:Status.ForeColor = $script:Pal.Danger
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'VPN ЛАУНЧЕР BY @YoncFALL', 'OK', 'Error') | Out-Null
     } finally {
-$script:Busy = $false
-$script:Ping = @{}
-$script:PingJob = $null
-$script:PingHandle = $null
+        $script:Busy = $false
+        $script:Ping = @{}
+        $script:PingJob = $null
+        $script:PingHandle = $null
         Set-BtnText $script:LoadBtn 'Загрузить подписку'
         $script:LoadBtn.Enabled = $true
     }
 })
 
-$btnPing = New-GameButton 'Проверить пинг' 224 118 160 36 'ghost'
-$form.Controls.Add($btnPing)
-$btnLog = New-GameButton 'Открыть лог' 392 118 212 36 'ghost'
-$form.Controls.Add($btnLog)
 $btnLog.Add_Click({ if (Test-Path $script:LogFile) { Start-Process notepad $script:LogFile } })
 
-New-GameCaption 'СЕРВЕРЫ' 16 170 200 | ForEach-Object { $form.Controls.Add($_) }
-$hint = Add-Label 'Ctrl+клик - выбрать несколько, пусто - авто-тест всех' 216 170 388
-$hint.ForeColor = $script:Pal.TextDim
-$hint.Font = $script:FSub
-$hint.TextAlign = 'MiddleRight'
-$lstServers = New-GameList 16 188 588 196 $true
-$form.Controls.Add($lstServers)
+$div1 = New-GameDivider 18 106 556
+$card.Controls.Add($div1)
 
-New-GameCaption 'РЕЖИМ' 16 396 200 | ForEach-Object { $form.Controls.Add($_) }
+New-GameCaption 'СЕРВЕРЫ' 18 118 200 | ForEach-Object { $card.Controls.Add($_) }
+New-GameLabel 'Ctrl+клик - несколько · пусто - авто-тест всех' 300 136 274 14 'TextDim' 'FSub' 'MiddleRight' | ForEach-Object { $card.Controls.Add($_) }
+# шапка колонок совпадает с колонками, которые рисует список
+New-GameLabel 'ПРОТОКОЛ' 18 136 57 14 'TextDim' 'FCaps' 'MiddleRight' | ForEach-Object { $card.Controls.Add($_) }
+New-GameLabel 'СЕРВЕР' 81 136 300 14 'TextDim' 'FCaps' 'MiddleLeft' | ForEach-Object { $card.Controls.Add($_) }
+New-GameLabel 'ПИНГ' 480 136 81 14 'TextDim' 'FCaps' 'MiddleRight' | ForEach-Object { $card.Controls.Add($_) }
 
-$rbTun = New-GameRadio 'Весь трафик - TUN (нужен админ)' 16 414 288 38
+$boxServers = New-GameListBox 18 152 556 178 $true
+$lstServers = $boxServers.List
+$card.Controls.Add($boxServers.Frame)
+
+$div2 = New-GameDivider 18 340 556
+$card.Controls.Add($div2)
+
+New-GameCaption 'РЕЖИМ' 18 352 200 | ForEach-Object { $card.Controls.Add($_) }
+
+$rbTun = New-GameRadio 'Весь трафик - TUN (нужен админ)' 18 368 270 36
 $rbTun.Checked = ($script:State.mode -ne 'proxy')
-$form.Controls.Add($rbTun)
+$card.Controls.Add($rbTun)
 
-$rbProxy = New-GameRadio 'Системный прокси' 312 414 292 38
+$rbProxy = New-GameRadio 'Системный прокси' 294 368 262 36
 $rbProxy.Checked = ($script:State.mode -eq 'proxy')
-$form.Controls.Add($rbProxy)
+$card.Controls.Add($rbProxy)
 
-New-GameCaption 'ИСКЛЮЧЕНИЯ ИЗ ТУННЕЛЯ' 16 466 320 | ForEach-Object { $form.Controls.Add($_) }
-$hint2 = Add-Label 'игры, Steam и античиты исключены автоматически' 336 466 268
-$hint2.ForeColor = $script:Pal.TextDim
-$hint2.Font = $script:FSub
-$hint2.TextAlign = 'MiddleRight'
+$div3 = New-GameDivider 18 412 556
+$card.Controls.Add($div3)
 
-$lstExcl = New-GameList 16 486 300 84 $false
-$form.Controls.Add($lstExcl)
+New-GameCaption 'ИСКЛЮЧЕНИЯ' 18 424 320 | ForEach-Object { $card.Controls.Add($_) }
+New-GameLabel 'игры, Steam и античиты исключены автоматически' 300 424 274 16 'TextDim' 'FSub' 'MiddleRight' | ForEach-Object { $card.Controls.Add($_) }
 
-$cmbProc = New-GameCombo 324 486 280 30
-$form.Controls.Add($cmbProc)
+$boxExcl = New-GameListBox 18 440 260 84 $false
+$lstExcl = $boxExcl.List
+$card.Controls.Add($boxExcl.Frame)
 
-$btnExclAdd = New-GameButton 'Добавить' 324 522 280 30 'ghost'
-$btnExclDel = New-GameButton 'Удалить' 324 558 136 30 'ghost'
-$btnExclClr = New-GameButton 'Очистить' 468 558 136 30 'ghost'
-$form.Controls.Add($btnExclAdd)
-$form.Controls.Add($btnExclDel)
-$form.Controls.Add($btnExclClr)
+$cmbProc = New-GameCombo 288 440 286 30
+$card.Controls.Add($cmbProc)
 
-$hint3 = Add-Label 'Список процессов обновляется при запуске. В поле можно вписать имя .exe вручную.' 16 590 588
-$hint3.ForeColor = $script:Pal.TextDim
-$hint3.Font = $script:FSub
+$btnExclAdd = New-GameButton 'Добавить' 288 474 286 30 'ghost'
+$btnExclDel = New-GameButton 'Удалить' 288 508 138 30 'ghost'
+$btnExclClr = New-GameButton 'Очистить' 426 508 130 30 'ghost'
+foreach ($b in @($btnExclAdd, $btnExclDel, $btnExclClr)) { $card.Controls.Add($b) }
 
-$btnConnect = New-GameButton 'ПОДКЛЮЧИТЬСЯ' 16 614 300 46 'accent'
-$btnDisconnect = New-GameButton 'ОТКЛЮЧИТЬ' 324 614 140 46 'danger'
+New-GameLabel 'Список процессов обновляется при запуске. В поле можно вписать имя .exe вручную.' 18 546 556 16 'TextDim' 'FSub' 'MiddleLeft' | ForEach-Object { $card.Controls.Add($_) }
+
+$div4 = New-GameDivider 18 570 556
+$card.Controls.Add($div4)
+
+$btnConnect = New-GameButton 'ПОДКЛЮЧИТЬСЯ' 18 582 288 42 'accent' 9
+$btnDisconnect = New-GameButton 'ОТКЛЮЧИТЬ' 316 582 118 42 'danger' 9
 $btnDisconnect.Enabled = $false
-$btnTestCfg = New-GameButton 'Проверить конфиг' 472 614 132 46 'ghost'
-$form.Controls.Add($btnConnect)
-$form.Controls.Add($btnDisconnect)
-$form.Controls.Add($btnTestCfg)
+$btnTestCfg = New-GameButton 'Проверить конфиг' 444 582 112 42 'ghost' 9
+foreach ($b in @($btnConnect, $btnDisconnect, $btnTestCfg)) { $card.Controls.Add($b) }
 
-$ledStatus = New-GameLed 18 678 10
+$ledStatus = New-GameLed 18 640 10
 $script:StatusLed = $ledStatus
-$form.Controls.Add($ledStatus)
-$lblStatus = Add-Label 'Готов' 36 672 568 20
-$lblStatus.ForeColor = [System.Drawing.Color]::Gainsboro
-$lblStatus.Font = $script:FBody
-$lblEgress = Add-Label '' 36 696 568 20
-$lblEgress.ForeColor = [System.Drawing.Color]::DarkGray
-$lblEgress.Font = $script:FMono
+$card.Controls.Add($ledStatus)
+$lblStatus = New-GameLabel 'Готов' 36 634 250 18 'Text' 'FBody' 'MiddleLeft'
+$card.Controls.Add($lblStatus)
+$lblEgress = New-GameLabel '' 300 634 274 18 'TextDim' 'FMono' 'MiddleRight'
+$card.Controls.Add($lblEgress)
 
 # ---------------- работа со списком исключений ----------------
 
@@ -275,24 +255,24 @@ function Add-Excl {
     if ($v -notmatch '\.exe$') { $v = "$v.exe" }
     if ($v -notmatch '^[\w\-. ]+\.exe$') {
         $script:Status.Text = 'Не похоже на имя процесса (.exe)'
-        $script:Status.ForeColor = [System.Drawing.Color]::Salmon
+        $script:Status.ForeColor = $script:Pal.Danger
         return
     }
     if ($lstExcl.Items.Contains($v)) {
         $script:Status.Text = "$v уже есть в списке"
-        $script:Status.ForeColor = [System.Drawing.Color]::Khaki
+        $script:Status.ForeColor = $script:Pal.Warn
         return
     }
     if ($GameSafeProcesses -contains $v) {
         $script:Status.Text = "$v и так исключён автоматически"
-        $script:Status.ForeColor = [System.Drawing.Color]::Khaki
+        $script:Status.ForeColor = $script:Pal.Warn
         return
     }
     [void]$lstExcl.Items.Add($v)
     $cmbProc.Text = ''
     Save-ExclList
     $script:Status.Text = "Добавлено исключение: $v"
-    $script:Status.ForeColor = [System.Drawing.Color]::LightGreen
+    $script:Status.ForeColor = $script:Pal.Accent2
     Write-VpnLog "exclusion added by user: $v"
 }
 
@@ -313,7 +293,7 @@ $btnExclClr.Add_Click({
     $lstExcl.Items.Clear()
     Save-ExclList
     $script:Status.Text = 'Список исключений очищен'
-    $script:Status.ForeColor = [System.Drawing.Color]::Khaki
+    $script:Status.ForeColor = $script:Pal.Warn
 })
 $lstExcl.Add_DoubleClick({ $btnExclDel.PerformClick() })
 
@@ -369,7 +349,7 @@ $script:PingTick.Add_Tick({
         }
         if ($dirty) { $lstServers.Refresh() }
         $script:Status.Text = ('Проверка пинга: {0} из {1}' -f $script:PingDone, $script:PingTotal)
-        $script:Status.ForeColor = [System.Drawing.Color]::Khaki
+        $script:Status.ForeColor = $script:Pal.Warn
 
         if ($script:PingHandle -and $script:PingHandle.IsCompleted) {
             $script:PingTick.Stop()
@@ -380,7 +360,7 @@ $script:PingTick.Add_Tick({
             $ok = @($script:Ping.Values | Where-Object { $_ -ge 0 }).Count
             $best = ($script:Ping.Values | Where-Object { $_ -ge 0 } | Measure-Object -Minimum).Minimum
             $script:Status.Text = ('Пинг готов: {0} из {1} доступны{2}' -f $ok, $script:Nodes.Count, $(if ($null -ne $best) { ", лучший {0} мс" -f $best } else { '' }))
-            $script:Status.ForeColor = if ($ok -gt 0) { [System.Drawing.Color]::LightGreen } else { [System.Drawing.Color]::Salmon }
+            $script:Status.ForeColor = if ($ok -gt 0) { $script:Pal.Accent2 } else { $script:Pal.Danger }
             Write-VpnLog ("ping done: $ok of $($script:Nodes.Count) reachable, best=$best ms")
             $lstServers.Refresh()
         }
@@ -391,7 +371,7 @@ $script:PingTick.Add_Tick({
         $script:PingBtn.Enabled = $true
         Set-BtnText $script:PingBtn 'Проверить пинг'
         $script:Status.Text = 'Ошибка проверки пинга (см. лог)'
-        $script:Status.ForeColor = [System.Drawing.Color]::Salmon
+        $script:Status.ForeColor = $script:Pal.Danger
         Write-VpnLog ("ping ERROR: " + $_.Exception.Message)
     }
 })
@@ -450,7 +430,7 @@ $btnPing.Add_Click({
         $script:PingBtn.Enabled = $true
         Set-BtnText $script:PingBtn 'Проверить пинг'
         $script:Status.Text = 'Ошибка проверки пинга (см. лог)'
-        $script:Status.ForeColor = [System.Drawing.Color]::Salmon
+        $script:Status.ForeColor = $script:Pal.Danger
         Write-VpnLog ('ping click ERROR: ' + $_.Exception.Message)
     }
 })
@@ -496,7 +476,7 @@ $btnConnect.Add_Click({
     $isAdm = (New-Object Security.Principal.WindowsPrincipal($ident)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($mode -eq 'tun' -and -not $isAdm) {
         $lblStatus.Text = 'Нужны права администратора...'
-        $lblStatus.ForeColor = [System.Drawing.Color]::Khaki
+        $lblStatus.ForeColor = $script:Pal.Warn
         $btnConnect.Enabled = $false
         [System.Windows.Forms.Application]::DoEvents()
         $ans = [System.Windows.Forms.MessageBox]::Show(
@@ -507,7 +487,7 @@ $btnConnect.Add_Click({
         if ($ans -ne 'OK') {
             Write-VpnLog 'elevation cancelled by user'
             $lblStatus.Text = 'Отменено - подключение не выполнено'
-            $lblStatus.ForeColor = [System.Drawing.Color]::Salmon
+            $lblStatus.ForeColor = $script:Pal.Danger
             $btnConnect.Enabled = $true
             return
         }
@@ -532,7 +512,7 @@ $btnConnect.Add_Click({
         } catch {
             Write-VpnLog ('elevation ERROR: ' + $_.Exception.Message)
             $lblStatus.Text = 'Не удалось получить права администратора'
-            $lblStatus.ForeColor = [System.Drawing.Color]::Salmon
+            $lblStatus.ForeColor = $script:Pal.Danger
             $btnConnect.Enabled = $true
             return
         }
@@ -583,12 +563,12 @@ $btnConnect.Add_Click({
 
         $btnDisconnect.Enabled = $true
         $lblStatus.Text = 'ПОДКЛЮЧЕНО  |  pid ' + $script:Proc.Id + '  |  ' + $(if ($sel.Count) { "$($sel.Count) сервер(а)" } else { 'авто-тест всех' })
-        $lblStatus.ForeColor = [System.Drawing.Color]::LightGreen
+        $lblStatus.ForeColor = $script:Pal.Accent2
         $script:Tick.Start()
     } catch {
         Write-VpnLog ('connect ERROR: ' + $_.Exception.Message)
         $lblStatus.Text = 'Не удалось подключиться'
-        $lblStatus.ForeColor = [System.Drawing.Color]::Salmon
+        $lblStatus.ForeColor = $script:Pal.Danger
         $btnConnect.Enabled = $true
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Ошибка подключения', 'OK', 'Error') | Out-Null
     }
@@ -604,7 +584,7 @@ $btnDisconnect.Add_Click({
     $btnConnect.Enabled = $true
     $btnDisconnect.Enabled = $false
     $lblStatus.Text = 'Отключено'
-    $lblStatus.ForeColor = [System.Drawing.Color]::Gainsboro
+    $lblStatus.ForeColor = $script:Pal.Text
     $lblEgress.Text = ''
 })
 
@@ -620,7 +600,7 @@ $btnTestCfg.Add_Click({
         $chk = Test-SingBoxConfig $cfg
         if ($chk.Ok) {
             $lblStatus.Text = 'Конфиг корректен'
-            $lblStatus.ForeColor = [System.Drawing.Color]::LightGreen
+            $lblStatus.ForeColor = $script:Pal.Accent2
             [System.Windows.Forms.MessageBox]::Show('Конфиг корректен.', 'VPN ЛАУНЧЕР BY @YoncFALL', 'OK', 'Information') | Out-Null
         } else {
             [System.Windows.Forms.MessageBox]::Show($chk.Error, 'Ошибка конфига', 'OK', 'Error') | Out-Null
@@ -644,7 +624,7 @@ $script:Tick.Add_Tick({
         $btnConnect.Enabled = $true
         $btnDisconnect.Enabled = $false
         $lblStatus.Text = 'Соединение оборвалось - sing-box завершился, смотри лог'
-        $lblStatus.ForeColor = [System.Drawing.Color]::Salmon
+        $lblStatus.ForeColor = $script:Pal.Danger
         return
     }
     if (($script:Counter % 3) -eq 1) {
@@ -652,7 +632,7 @@ $script:Tick.Add_Tick({
             $r = Invoke-WebRequest 'https://api.ipify.org?format=json' -UseBasicParsing -TimeoutSec 8
             $ip = ($r.Content | ConvertFrom-Json).ip
             $lblEgress.Text = "Внешний IP: $ip"
-            $lblEgress.ForeColor = [System.Drawing.Color]::LightSteelBlue
+            $lblEgress.ForeColor = $script:Pal.Accent
         } catch {
             $lblEgress.Text = 'Внешний IP недоступен'
             $lblEgress.ForeColor = [System.Drawing.Color]::Gray
@@ -678,14 +658,14 @@ if ($Autoconnect) {
     $script:AutoTimer.Add_Tick({
         $script:AutoTimer.Stop()
         $lblStatus.Text = 'Загружаю подписку и подключаюсь...'
-        $lblStatus.ForeColor = [System.Drawing.Color]::Khaki
+        $lblStatus.ForeColor = $script:Pal.Warn
         [System.Windows.Forms.Application]::DoEvents()
 
         $btnLoad.PerformClick()
         [System.Windows.Forms.Application]::DoEvents()
         if ($script:Nodes.Count -eq 0) {
             $lblStatus.Text = 'Не удалось загрузить подписку - проверь ссылку'
-            $lblStatus.ForeColor = [System.Drawing.Color]::Salmon
+            $lblStatus.ForeColor = $script:Pal.Danger
             return
         }
 
