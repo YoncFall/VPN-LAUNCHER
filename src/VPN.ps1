@@ -14,10 +14,13 @@ function Read-VpnScriptText([string]$name) {
     if (-not (Test-Path $p)) { throw "Не найден $name рядом с программой или в src\" }
     $txt = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
     # у скрипта, загруженного текстом, $PSScriptRoot не определён -
-    # подставляем свой, как это делает хост (VPNLauncher.exe)
+    # подставляем свой, как это делает хост (VPNLauncher.exe).
+    # Токен собираем из частей: хост тоже подменяет $PSScriptRoot текстом,
+    # и попал бы внутрь этой строки-шаблона, сломав синтаксис.
     if ($PSScriptRoot) {
         $root = "'" + $PSScriptRoot.Replace("'", "''") + "'"
-        $txt = $txt.Replace('$PSScriptRoot', $root)
+        $tkn = '$' + 'PSScriptRoot'
+        $txt = $txt.Replace($tkn, $root)
     }
     return $txt
 }
