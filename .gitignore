@@ -10,4 +10,5 @@ sing-box.exe
 vpn-launcher.log
 singbox.log
 singbox.log.err
+cache.db
 app.pid
