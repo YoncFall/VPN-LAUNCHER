@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Индикатор-лампочка. Порт New-GameLed (theme.ps1:1049-1087).
 
-Состояния: off=Muted, busy=Accent, ok=Accent2, err=Danger.
+Состояния: off=Muted, busy=Accent, ok=Accent2, warn=Warn (пинг), err=Danger.
 Мягкое свечение (a=150 у центра -> 0 у края) + ядро + белый блик.
 
 Отклонение от 1.0.6 (по просьбе пользователя): плавное включение/гашение и
@@ -26,6 +26,7 @@ _STATES = {
     "off": theme.MUTED,
     "busy": theme.ACCENT,
     "ok": theme.ACCENT2,
+    "warn": theme.WARN,  # пинг-проверка (по просьбе)
     "err": theme.DANGER,
 }
 

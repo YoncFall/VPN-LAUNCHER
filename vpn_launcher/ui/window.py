@@ -408,6 +408,8 @@ class MainWindow(QWidget):
             w.failed.connect(self._on_ping_failed)
             w.finished.connect(self._on_ping_finished)
             self._pinger = w
+            # жёлтым плавно загорается на время проверки (по просьбе - README)
+            self.led_status.light_up("warn", pulse=False)
             w.start()
         except Exception as exc:
             self._pinger = None
@@ -432,6 +434,12 @@ class MainWindow(QWidget):
         self._pinger = None
         self.btn_ping.setEnabled(True)
         self.btn_ping.set_text("Проверить пинг")
+        # проверка кончилась: жёлтая гаснет; если онлайн - обратно зелёная
+        # пульсация (по просьбе - README)
+        if self.proc is not None:
+            self.led_status.light_up("ok", pulse=True)
+        else:
+            self.led_status.light_off()
         if self._ping_error:
             return
         vals = [v for v in self.list_servers.pings.values() if v >= 0]

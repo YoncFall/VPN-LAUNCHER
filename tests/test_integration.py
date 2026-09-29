@@ -207,12 +207,48 @@ class TestPing:
         win.list_servers.set_nodes(win.nodes)
         win._ping_click()
         assert win.btn_ping.isEnabled() is False
+        # на время проверки нижняя LED горит жёлтым (по просьбе - README)
+        assert win.led_status.state() == "warn"
+        assert not win.led_status._pulse
         assert _await(qapp, lambda: win._pinger is None)
         assert win.list_servers.pings["t-local"] >= 0
         text = win.lbl_status.text()
         assert text.startswith("Пинг готов: 1 из 1 доступны")
         assert "лучший" in text
         assert win.btn_ping.isEnabled()
+        # после проверки жёлтая плавно погасла (офлайн - светиться незачем)
+        assert _await(qapp, lambda: not win.led_status.is_lit())
+        assert win.led_status.state() == "off"
+
+    def test_ping_restores_green_when_connected(self, qapp, win, local_server):
+        """Онлайн: после пинга LED возвращается в зелёную пульсацию."""
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        win.proc = FakeProc()
+        win.led_status.light_up("ok", pulse=True)
+        node = {
+            "display": "local",
+            "proto": "vless",
+            "tag": "t-local",
+            "server": "127.0.0.1",
+            "server_port": local_server,
+        }
+        win.nodes = [node]
+        win.list_servers.set_nodes(win.nodes)
+        win._ping_click()
+        assert win.led_status.state() == "warn"
+        assert _await(qapp, lambda: win._pinger is None)
+        assert _await(qapp, lambda: win.led_status.state() == "ok")
+        assert win.led_status._pulse
+        win.proc = None  # без него teardown не трогает замоканный процесс
 
     def test_ping_without_nodes(self, qapp, win):
         """382-385: 'Сначала загрузи подписку.'."""
