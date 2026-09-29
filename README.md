@@ -1,8 +1,10 @@
 # VPN LAUNCHER — Python edition
 
-Переписка [VPN LAUNCHER BY @YoncFALL](../VPN-LAUNCHER-src/) на Python + PySide6.
-Старая PowerShell-версия (v1.0.6) остаётся в `VPN-LAUNCHER-src` и продолжает
-поддерживаться — этот проект развивается рядом.
+Переписка [VPN LAUNCHER BY @YoncFALL 1.0.6](https://github.com/YoncFall/VPN-LAUNCHER/tree/ps-1.0.6)
+на Python + PySide6. Старая PowerShell-версия сохранена в ветке `ps-1.0.6`
+и продолжает поддерживаться; эта ветка (`main`) — Python-версия, релиз
+**[v2.0.0](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
+(`VPN-LAUNCHER-Setup.exe` — установщик с удалалкой, `VPN-LAUNCHER.zip` — portable).
 
 ## Статус: этапы 0–7 завершены — Windows-версия готова к публикации
 
@@ -60,7 +62,7 @@ venv\Scripts\python.exe -m pytest           # тесты (206)
 # переснять golden-эталон с текущей PS-версии (после правок core.ps1);
 # -SingBox необязателен: без него пропускается только прогон `sing-box check`
 powershell -ExecutionPolicy Bypass -File tools\make_golden.ps1 `
-    -Core ..\VPN-LAUNCHER-src\src\core.ps1 -SingBox <путь\sing-box.exe>
+    -Core <распаковка ветки ps-1.0.6>\src\core.ps1 -SingBox <путь\sing-box.exe>
 
 # движок для `sing-box check`, если он не в путях по умолчанию:
 $env:SING_BOX_EXE = "C:\...\sing-box.exe"
