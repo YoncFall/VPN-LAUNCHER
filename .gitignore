@@ -6,6 +6,7 @@ build/
 dist/
 state.json
 config.json
+sing-box.exe
 vpn-launcher.log
 singbox.log
 singbox.log.err
