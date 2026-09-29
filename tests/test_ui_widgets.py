@@ -12,12 +12,14 @@ QApplication роняет Qt (qFatal -> exit -1073740791).
 from __future__ import annotations
 
 import os
+import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from vpn_launcher.ui.widgets.led import Led  # noqa: E402
 from vpn_launcher.ui.widgets.neon_list import NeonList  # noqa: E402
 from vpn_launcher.ui.widgets.picker import GamePicker  # noqa: E402
 from vpn_launcher.ui.widgets.scroll_bar import NeonScrollBar  # noqa: E402
@@ -189,6 +191,56 @@ class TestGamePicker:
         p.open_drop()
         assert not p._pop.grab().isNull()
         p.close_drop()
+
+
+# ---- Led (анимация, по просьбе - см. README «Отклонения») -------------------
+
+
+def _spin(qapp: QApplication, seconds: float) -> None:
+    """Крутим цикл событий, пока таймер анимации тикает."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+class TestLed:
+    def test_light_up_ramps_then_pulses(self, qapp):
+        led = Led(10, "off")
+        led.light_up("ok", pulse=True)
+        _spin(qapp, 0.15)  # середина fade-in: плавно, не резко
+        mid = led._brightness
+        assert 0.0 < mid < 1.0, f"нет плавного разгона: {mid}"
+        _spin(qapp, 0.6)  # пик достигнут, пошла пульсация «пик-пик»
+        samples = []
+        end = time.monotonic() + 1.4  # полный цикл дыхания (1.2с)
+        while time.monotonic() < end:
+            qapp.processEvents()
+            samples.append(led._brightness)
+            time.sleep(0.02)
+        assert led.state() == "ok"
+        assert max(samples) > 0.9, "нет пика"
+        assert min(samples) < 0.6, "нет спада в пульсации"
+        led._timer.stop()
+
+    def test_light_off_fades_to_dark(self, qapp):
+        led = Led(10, "ok")
+        led.light_up("ok", pulse=True)
+        _spin(qapp, 0.7)
+        led.light_off()
+        _spin(qapp, 0.8)  # fade-out 0.6с
+        assert led._brightness == 0.0
+        assert led.state() == "off"
+        assert not led._timer.isActive()
+        assert not led.is_lit()
+
+    def test_set_state_stays_instant(self, qapp):
+        """set_state - мгновенный (как в 1.0.6), без таймера."""
+        led = Led(10, "off")
+        led.set_state("busy")
+        assert led.state() == "busy"
+        assert not led._timer.isActive()
+        assert not led.grab().isNull()
 
 
 # ---- главное окно ----------------------------------------------------------

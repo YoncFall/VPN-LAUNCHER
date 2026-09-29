@@ -312,17 +312,68 @@ class TestConnect:
         assert saved["subUrl"] == "https://sub.example/x"
 
     def test_disconnect(self, qapp, win):
-        """btnDisconnect (577-589)."""
+        """btnDisconnect (577-589); лампочки гаснут плавно (по просьбе)."""
         win.btn_connect.setEnabled(False)
         win.btn_disconnect.setEnabled(True)
         win.lbl_egress.setText("Внешний IP: 9.9.9.9")
         win.tick.start()
+        win.led_status.light_up("ok", pulse=True)
+        win.titlebar.led.light_up("ok", pulse=False)
         win._disconnect_click()
         assert win.lbl_status.text() == "Отключено"
         assert win.lbl_egress.text() == ""
         assert win.btn_connect.isEnabled() and not win.btn_disconnect.isEnabled()
         assert not win.tick.isActive()
         assert win.proc is None
+        # плавное гашение обеих лампочек до полного off
+        assert _await(
+            qapp,
+            lambda: not win.led_status.is_lit() and not win.titlebar.led.is_lit(),
+        )
+        assert win.led_status.state() == "off"
+        assert win.titlebar.led.state() == "off"
+
+    def test_connect_success_lights_leds(self, qapp, win, monkeypatch):
+        """ПОДКЛЮЧЕНО -> нижняя LED пульсирует, верхняя горит (README-отклонение).
+
+        Движок замокан; внутри _connect_click работает Start-Sleep -Seconds 3,
+        поэтому тест занимает ~3с.
+        """
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: "cfg.json",
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
+        assert win.led_status.state() == "ok"
+        assert win.led_status._pulse, "нижняя должна пульсировать"
+        assert win.titlebar.led.state() == "ok"
+        assert not win.titlebar.led._pulse, "верхняя горит ровно"
+        assert win.btn_disconnect.isEnabled()
+        assert win.tick.isActive()
 
 
 # ---- таймер 10с (VPN.ps1:615-641) ------------------------------------------

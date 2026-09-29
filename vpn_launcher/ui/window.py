@@ -571,6 +571,10 @@ class MainWindow(QWidget):
             self._status(
                 f"ПОДКЛЮЧЕНО  |  pid {self.proc.pid}  |  {nsel}", theme.ACCENT2
             )
+            # лампочки при успешном подключении (отклонение от 1.0.6 - см. README):
+            # нижняя - плавно и с пульсацией, верхняя у минимизации - ровно
+            self.led_status.light_up("ok", pulse=True)
+            self.titlebar.led.light_up("ok", pulse=False)
             self._tick_count = 0
             self.tick.start()
         except Exception as ex:
@@ -589,6 +593,8 @@ class MainWindow(QWidget):
         self.btn_disconnect.setEnabled(False)
         self._status("Отключено", theme.TEXT)
         self.lbl_egress.setText("")
+        self.led_status.light_off()  # плавно угасают (см. led.py)
+        self.titlebar.led.light_off()
 
     def _testcfg_click(self) -> None:
         """btnTestCfg.Add_Click (VPN.ps1:591-611)."""
@@ -624,6 +630,8 @@ class MainWindow(QWidget):
                 "Соединение оборвалось - sing-box завершился, смотри лог",
                 theme.DANGER,
             )
+            self.led_status.light_off()  # обрыв - лампочки гаснут плавно
+            self.titlebar.led.light_off()
             return
         # (Counter % 3) == 1: внешний IP раз в 30с
         if self._tick_count % 3 == 1 and self._egress is None:
