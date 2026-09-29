@@ -4,7 +4,8 @@
 Вид: тёмно-синий градиентный фон (Bg2->Bg), скруглённые углы 12 (как
 Install-GameCorners), шапка с неоновым логотипом, градиентные линии
 (кант шапки, подчёркивание, полоска карточки, разделители с акцентной
-точкой). Списки/пикер - на этапе 4, логика - на этапах 2 и 5.
+точкой). Списки (NeonList в GameFrame, inset 3 как New-GameListBox) и
+пикер (GamePicker) - этап 4; логика - на этапах 2 и 5.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ from vpn_launcher.ui.widgets.divider import Divider
 from vpn_launcher.ui.widgets.field import GameField
 from vpn_launcher.ui.widgets.frame import GameFrame
 from vpn_launcher.ui.widgets.led import Led
+from vpn_launcher.ui.widgets.neon_list import NeonList
+from vpn_launcher.ui.widgets.picker import GamePicker
 from vpn_launcher.ui.widgets.radio import GameRadio
 from vpn_launcher.ui.widgets.title_bar import TitleBar
 
@@ -128,6 +131,9 @@ class MainWindow(QWidget):
         _label(card, "ПИНГ", 480, 136, 81, 14, theme.TEXT_DIM, theme.f_caps(), "right")
         self.frame_servers = GameFrame(10, card)
         self.frame_servers.setGeometry(18, 152, 556, 178)
+        # список серверов: пинг-колонки, как New-GameListBox -Ping (VPN.ps1:170)
+        self.list_servers = NeonList(ping=True, parent=self.frame_servers)
+        self.list_servers.setGeometry(3, 3, 556 - 6, 178 - 6)
 
         div2 = Divider(card)
         div2.setGeometry(18, 340, 556, 2)
@@ -152,10 +158,11 @@ class MainWindow(QWidget):
         )
         self.frame_excl = GameFrame(10, card)
         self.frame_excl.setGeometry(18, 444, 260, 84)
-        self.field_proc = GameField(
-            "", "выбери процесс или впиши имя .exe", card
-        )  # этап 4: шеврон-попап GamePicker
-        self.field_proc.setGeometry(288, 444, 286, 30)
+        # список исключений: текстовый режим (VPN.ps1:193)
+        self.list_excl = NeonList(ping=False, parent=self.frame_excl)
+        self.list_excl.setGeometry(3, 3, 260 - 6, 84 - 6)
+        self.picker_proc = GamePicker("выбери процесс или впиши имя .exe", card)
+        self.picker_proc.setGeometry(288, 444, 286, 30)
 
         self.btn_add = GameButton("Добавить", "ghost", 8, card)
         self.btn_add.setGeometry(288, 478, 286, 30)
