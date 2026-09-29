@@ -1481,17 +1481,22 @@ static class Setup
     static void Log(string msg)
     {
         string stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string written = null;
         try
         {
-            File.AppendAllText(LogPath(), stamp + " " + msg + Environment.NewLine);
+            string p = LogPath();
+            File.AppendAllText(p, stamp + " " + msg + Environment.NewLine);
+            written = p;
         }
         catch { }
         try
         {
-            // запасной лог рядом с установщиком, если temp недоступен
+            // Запасной лог рядом с setup.exe - ТОЛЬКО когда основной (temp)
+            // недоступен. В 1.0.6 он писался всегда и оставлял файл там, откуда
+            // запустили установщик (отклонение от 1.0.6 - см. README).
+            if (written != null) return;
             string alt = Path.Combine(SelfDir, "vpnlauncher_setup.log");
-            if (!string.Equals(Path.GetFullPath(alt), Path.GetFullPath(LogPath()), StringComparison.OrdinalIgnoreCase))
-                File.AppendAllText(alt, stamp + " " + msg + Environment.NewLine);
+            File.AppendAllText(alt, stamp + " " + msg + Environment.NewLine);
         }
         catch { }
     }

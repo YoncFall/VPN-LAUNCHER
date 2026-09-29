@@ -67,6 +67,14 @@ class TestInstallerAssets:
         assert "Не найден sing-box.exe" in cs  # проверка после копирования
         assert "VPN.ps1" not in cs  # PS-версии здесь больше нет
 
+    def test_setup_spare_log_only_when_temp_fails(self):
+        """Отклонение: запасной лог у setup.exe не мусорит там, откуда его запустили.
+
+        1.0.6 писал его всегда (файл оставался на рабочем столе/в загрузках).
+        """
+        cs = _read("installer/Setup.cs")
+        assert "if (written != null) return;" in cs
+
 
 class TestBuildScripts:
     def test_scripts_are_ascii(self):
