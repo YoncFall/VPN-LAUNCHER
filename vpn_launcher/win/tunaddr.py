@@ -22,9 +22,26 @@
 незанятый кандидат. Первый кандидат - исторический 172.19.0.1/30 (паритет с
 1.0.6 и golden-файлами): на машине без конфликтов меняется ничего.
 
+Второй случай (30.09.2026, та же машина) - Happ ПЕРЕСОЗДАЁТ свой адаптер при
+каждом переподключении. Пока его адаптер на месте, занятость видна и подбор
+корректно уходит на следующий кандидат. Но в окне между удалением старого
+адаптера и созданием нового адрес выглядит свободным:
+
+    01:04:36  tun address: 172.19.0.5/30   <- happ-xray держал .1, мы ушли на .5
+    01:05:12  tun address: 172.19.0.1/30   <- в этот миг у Happ адаптера не было,
+                                              мы заняли ЕГО адрес
+
+После чего чужой VPN не может поднять свой адаптер (или вытесняет наш).
+Поэтому подсеть чужого VPN резервируется, пока он УСТАНОВЛЕН (см.
+HAPP_RESERVED) - детект по установке, а не по запущенному процессу: окно
+пересоздания случается как раз при живом процессе.
+
 Ограничения (сознательные):
     - проверяются только АДРЕСА, не маршруты: чужой маршрут, не имеющий своего
       адреса в нашем пуле, останется незамеченным;
+    - резервируется ровно та подсеть, что реально занята чужим VPN на машине
+      диагностики; другой VPN с другим адресом ловится только когда его
+      адаптер на месте;
     - любая ошибка WinAPI -> пустое множество -> выбирается первый кандидат
       (поведение 1.0.6). Диагностика не должна валить приложение.
 """
@@ -34,6 +51,7 @@ import ctypes
 import socket
 from ctypes import wintypes
 from ipaddress import ip_address, ip_network
+from pathlib import Path
 from typing import Iterable
 
 AF_INET = 2
@@ -52,6 +70,21 @@ TUN_V4_CANDIDATES: tuple[str, ...] = (
 TUN_V6_CANDIDATES: tuple[str, ...] = tuple(
     f"fdfe:dcba:9876::{i}/126" for i in range(1, 254, 4)
 )
+
+# --- подсети чужих VPN, резервируемые навсегда ------------------------------
+# Точная подсеть, занятая Happ на машине диагностики. Список оставляем
+# конфигурируемым: если чужой VPN всплывёт с другим адресом, сюда дописывается
+# строка, а логика подбора не меняется.
+HAPP_RESERVED: tuple[str, ...] = ("172.19.0.0/30",)
+
+# Признаки установки Happ: куда ставится по умолчанию + ключ службы в реестре.
+# Реестр покрывает нестандартный путь установки, каталог - отсутствие прав
+# на чтение HKLM.
+_HAPP_DIRS: tuple[str, ...] = (
+    r"C:\Program Files\FlyFrogLLC\Happ",
+    r"C:\Program Files (x86)\FlyFrogLLC\Happ",
+)
+_HAPP_SERVICE_KEY = r"SYSTEM\CurrentControlSet\Services\HappService"
 
 # --- WinAPI: GetAdaptersAddresses (iphlpapi) --------------------------------
 # Раскладки x64: у обеих структур берём только нужные поля, отступы сверены с
@@ -157,6 +190,44 @@ def assigned_addresses() -> set[str]:
         return set()
 
 
+def happ_installed() -> bool:
+    """Happ установлен на этой машине (каталог по умолчанию или служба в реестре).
+
+    Детект по УСТАНОВКЕ, а не по запущенному процессу: окно пересоздания
+    адаптера Happ случается как раз при живом процессе - в этот момент его
+    адрес выглядит свободным. Установлен -> его подсеть табу навсегда.
+
+    Best-effort: любая ошибка (включая отсутствие Happ) -> False (поведение
+    1.0.6 не меняется).
+    """
+    try:
+        if any(Path(p).is_dir() for p in _HAPP_DIRS):
+            return True
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _HAPP_SERVICE_KEY):
+            return True
+    except Exception:
+        return False
+
+
+def reserved_addresses() -> set[str]:
+    """Адреса подсетей чужих VPN, занятые «в будущем» (см. HAPP_RESERVED).
+
+    Возвращаются только когда Happ установлен. Пусто на машинах без Happ -
+    подбор ведёт себя как в 1.0.6.
+    """
+    if not happ_installed():
+        return set()
+    out: set[str] = set()
+    for cidr in HAPP_RESERVED:
+        try:
+            out.update(str(ip) for ip in ip_network(cidr, strict=False))
+        except ValueError:
+            continue
+    return out
+
+
 # --- подбор -----------------------------------------------------------------
 
 
@@ -172,10 +243,12 @@ def _first_free(candidates: Iterable[str], used: set[str]) -> str | None:
 def choose_tun_addresses(assigned: Iterable[str] | None = None) -> list[str]:
     """Адреса [v4, v6] для TUN-инбаунда; v6 опускается, если свободных нет.
 
-    assigned - занятые адреса (строки); None -> читаем у системы.
+    assigned - занятые адреса (строки); None -> читаем у системы и резервируем
+    подсети чужих VPN (см. reserved_addresses). Явный список (тесты) резервов
+    не применяет - детерминированность важнее.
     """
     if assigned is None:
-        assigned = assigned_addresses()
+        assigned = set(assigned_addresses()) | reserved_addresses()
     used: set[str] = set()
     for a in assigned:
         try:

@@ -15,6 +15,8 @@ from vpn_launcher.win.tunaddr import (
     TUN_V6_CANDIDATES,
     assigned_addresses,
     choose_tun_addresses,
+    happ_installed,
+    reserved_addresses,
 )
 
 DEFAULT = ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]
@@ -80,6 +82,46 @@ class TestChoose:
         # без конфликтов вывод должен совпадать с PS-версией (golden-файлы)
         assert TUN_V4_CANDIDATES[0] == "172.19.0.1/30"
         assert TUN_V6_CANDIDATES[0] == "fdfe:dcba:9876::1/126"
+
+
+class TestHappReservation:
+    """Happ пересоздаёт адаптер при переподключении - окно, когда его адрес
+    выглядит свободным (30.09.2026: 01:04:36 мы на .5, 01:05:12 - уже на ЕГО .1).
+    Подсеть чужого VPN должна быть табу, пока Happ УСТАНОВЛЕН, а не запущен.
+    """
+
+    def test_reserved_is_empty_without_happ(self, monkeypatch):
+        monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: False)
+        assert reserved_addresses() == set()
+
+    def test_reserved_covers_happ_subnet(self, monkeypatch):
+        monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: True)
+        assert {"172.19.0.1", "172.19.0.2"} <= reserved_addresses()
+
+    def test_adapter_gone_but_happ_installed_still_avoids_subnet(self, monkeypatch):
+        # assigned=None (системный проба в тестах пустой, conftest), но резерв
+        # обязан сработать:172.19.0.1/30 не выбирается, даже когда занятости
+        # у Happ сейчас не видно
+        monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: True)
+        assert choose_tun_addresses() == [
+            "172.19.0.5/30", "fdfe:dcba:9876::1/126",
+        ]
+
+    def test_explicit_assigned_ignores_reservation(self, monkeypatch):
+        # явный список = детерминированный режим golden: резерв не применяется
+        monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: True)
+        assert choose_tun_addresses(assigned=[]) == DEFAULT
+
+    def test_happ_detector_returns_bool(self):
+        # машинозависимо: здесь важен только тип (True на машине с Happ)
+        assert isinstance(happ_installed(), bool)
+
+    def test_config_takes_reserved_subnet_into_account(self, monkeypatch):
+        monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: True)
+        c = cfg.build_sing_box_config(_nodes(), mode="tun")
+        assert c["inbounds"][0]["address"] == [
+            "172.19.0.5/30", "fdfe:dcba:9876::1/126",
+        ]
 
 
 class TestWiringIntoConfig:

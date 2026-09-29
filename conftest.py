@@ -34,8 +34,14 @@ def _tun_address_probe(monkeypatch):
     Иначе golden-файлы и test_tun_inbound зависят от чужих VPN на машине
     разработчика: Happ держит 172.19.0.1/30 -> конфиг собрался бы с
     172.19.0.5/30, и сравнение с эталоном упало бы.
+
+    happ_installed тоже отключается: на машине с Happ установлен его резерв
+    (reserved_addresses) добавил бы 172.19.0.0/30 в занятые, и эталон
+    172.19.0.1/30 не собрался бы. Детект Happ проверяется отдельными
+    тестами с явным моком.
     """
     monkeypatch.setattr("vpn_launcher.win.tunaddr.assigned_addresses", lambda: set())
+    monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: False)
 
 
 @pytest.fixture
