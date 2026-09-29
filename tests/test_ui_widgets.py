@@ -162,8 +162,10 @@ class TestGamePicker:
         assert p._pop.item_count() == 1
         p.setText("")  # пусто - все пункты
         assert p._pop.item_count() == 3
-        p.setText("zzz")  # совпадений нет - закрыть
-        assert not p.drop_open()
+        p.setText("zzz")  # совпадений нет - заглушка, список не закрывается
+        assert p.drop_open()
+        assert p._pop.item_count() == 1
+        assert p._pop.list.model().item(0).text() == "(нет совпадений)"
 
     def test_commit_sets_text_and_closes(self, qapp):
         p = GamePicker("ph")
@@ -213,23 +215,36 @@ class TestGamePicker:
         assert p._pop.list.model().item(0).text() == "csrss.exe"
         assert p.drop_open()  # есть совпадения - список остаётся открытым
 
-    def test_no_match_closes_and_returns_focus(self, qapp, monkeypatch):
-        """Нет совпадений - список закрывается, фокус возвращается в поле."""
+    def test_no_match_keeps_popup_with_placeholder(self, qapp, monkeypatch):
+        """По просьбе: нет совпадений - список не сворачивается (README).
+
+        В 1.0.6 здесь был CloseDrop (theme.ps1:401); теперь заглушку нельзя
+        выбрать, Escape закрывает и возвращает фокус полю.
+        """
         p = GamePicker("ph")
         p.resize(286, 30)
         p.show()
         p.set_items(["adb.exe", "csrss.exe"])
         p.open_drop()
-        # offscreen не активирует окна (hasFocus там всегда False) -
-        # фиксируем вызов setFocus в close_drop программно
-        calls = []
-        monkeypatch.setattr(p._edit, "setFocus", lambda *a, **k: calls.append(1))
         QTest.keyClicks(p._pop, "z")
         assert p.text() == "z"
-        assert not p.drop_open()  # совпадений нет - закрыть (theme.ps1:401)
-        assert calls  # close_drop вернул фокус полю (набор продолжается)
-        QTest.keyClicks(p._edit, "z")  # печать после закрытия идёт в поле
-        assert p.text() == "zz"
+        assert p.drop_open()  # НЕ сворачивается при наборе
+        assert p._pop.item_count() == 1
+        assert p._pop.list.model().item(0).text() == "(нет совпадений)"
+        p.commit_from_popup(0)  # заглушку выбрать нельзя
+        assert p.text() == "z"
+        assert p.drop_open()
+        # стираем - совпадения возвращаются, список живой
+        QTest.keyClick(p._pop, Qt.Key.Key_Backspace)
+        assert p.text() == ""
+        assert p._pop.item_count() == 2
+        # Escape - закрыть, фокус возвращается в поле (набор продолжается);
+        # offscreen не активирует окна, поэтому ловим setFocus программно
+        calls = []
+        monkeypatch.setattr(p._edit, "setFocus", lambda *a, **k: calls.append(1))
+        QTest.keyClick(p._pop, Qt.Key.Key_Escape)
+        assert not p.drop_open()
+        assert calls  # close_drop вернул фокус полю
 
     def test_popup_escape_and_down_close(self, qapp):
         """Escape/Down при открытом списке - закрыть (theme.ps1:304-305)."""

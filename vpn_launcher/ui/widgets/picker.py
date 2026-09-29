@@ -17,8 +17,10 @@
     (40,56,76)->(28,44,62) r6 + рамка Accent 1px, текст padding 12,
     цвет (206,212,226)/выделенный (230,234,242);
   - фильтр: префикс (StartsWith, lowerInvariant) по тексту поля, пусто - все;
-    совпадений нет - закрыть; при открытом списке клавиши пересылаются в
-    поле (в 1.0.6 фокус всегда в TextBox) - набор сразу фильтрует список;
+    при открытом списке клавиши пересылаются в поле (в 1.0.6 фокус всегда
+    в TextBox) - набор сразу фильтрует список; совпадений нет - по просьбе
+    список НЕ сворачивается, а показывает строку «(нет совпадений)»
+    (в 1.0.6 CloseDrop - см. README «Отклонения»);
   - геометрия: под полем (y=bottom+2), h=min(8,n)*28+8, если не влезает -
     над полем; ширина = ширина пикера; репозиция при движении окна;
   - закрытие: клик вне пикера и попапа (Qt.Popup нативно, как
@@ -56,6 +58,16 @@ from vpn_launcher.ui.widgets.scroll_bar import NeonScrollBar
 
 ROW_H = 28
 _BTN_ZONE = 29  # OnMouseMove: x >= ClientSize.Width - 29 (theme.ps1:342)
+_EMPTY_TEXT = "(нет совпадений)"  # строка-заглушка (по просьбе, README)
+_PLACEHOLDER_ROLE = Qt.ItemDataRole.UserRole  # метка заглушки в модели
+
+
+def _is_placeholder(model, row: int) -> bool:
+    """Строка-заглушка «(нет совпадений)» - не выбирается и не коммитится."""
+    if row < 0:
+        return False
+    it = model.item(row)  # type: ignore[union-attr]
+    return it is not None and bool(it.data(_PLACEHOLDER_ROLE))
 
 
 def _edit_qss() -> str:
@@ -122,7 +134,9 @@ class _HoverList(QListView):
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:  # noqa: N802
         idx = self.indexAt(e.position().toPoint())
-        if idx.isValid() and idx != self.currentIndex():
+        if idx.isValid() and idx != self.currentIndex() and not _is_placeholder(
+            self.model(), idx.row()
+        ):
             from PySide6.QtCore import QItemSelectionModel
 
             sm = self.selectionModel()
@@ -229,6 +243,23 @@ class _DropPopup(QWidget):
         if items:
             self.list.setCurrentIndex(self.list.model().index(0, 0))
 
+    def set_placeholder(self) -> None:
+        """Совпадений нет - строка-заглушка, список остаётся открытым.
+
+        По просьбе (README): в 1.0.6 здесь был CloseDrop (theme.ps1:401).
+        """
+        m = self.list.model()
+        m.clear()  # type: ignore[union-attr]
+        m.setColumnCount(1)  # type: ignore[union-attr]
+        from PySide6.QtGui import QStandardItem
+
+        it = QStandardItem(_EMPTY_TEXT)
+        it.setEditable(False)
+        it.setEnabled(False)
+        it.setData(True, _PLACEHOLDER_ROLE)
+        m.appendRow(it)  # type: ignore[union-attr]
+        # без setCurrentIndex - заглушка не подсвечивается как выбор
+
 
 class GamePicker(QWidget):
     """Поле с кнопкой-шевроном и выпадающим списком процессов."""
@@ -326,7 +357,11 @@ class GamePicker(QWidget):
         self._pop.setGeometry(gx, y, self.width(), h)
 
     def _filter_popup(self) -> None:
-        """Порт FilterPopup (theme.ps1:393-404): префикс, lowerInvariant."""
+        """Порт FilterPopup (theme.ps1:393-404): префикс, lowerInvariant.
+
+        Отклонение (по просьбе): нулевые совпадения при живом наборе не
+        закрывают список - показываем строку-заглушку (README).
+        """
         t = self._edit.text().strip().lower()
         shown = [
             it
@@ -334,7 +369,14 @@ class GamePicker(QWidget):
             if it and (not t or it.lower().startswith(t))
         ]
         if not shown:
-            self.close_drop()
+            if not self.item_source:
+                # источника нет вовсе - открывать нечего (1.0.6: ItemCount=0)
+                if self.drop_open():
+                    self.close_drop()
+                return
+            self._pop.set_placeholder()
+            if self.drop_open():
+                self._layout_popup()
             return
         self._pop.set_items(shown)
         if self.drop_open():
@@ -344,6 +386,8 @@ class GamePicker(QWidget):
         """Порт CommitFromPopup (theme.ps1:406-413)."""
         if index < 0 or index >= self._pop.item_count():
             return
+        if _is_placeholder(self._pop.list.model(), index):
+            return  # заглушку выбрать нельзя - список остаётся открытым
         self._edit.setText(self._pop.list.model().item(index).text())  # type: ignore[union-attr]
         self._edit.selectAll()
         self.close_drop()
