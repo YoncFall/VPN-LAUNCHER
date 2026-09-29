@@ -7,4 +7,6 @@ dist/
 state.json
 config.json
 vpn-launcher.log
+singbox.log
+singbox.log.err
 app.pid

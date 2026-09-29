@@ -65,6 +65,12 @@ class GameButton(QWidget):
         self._down = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    # ---- text -------------------------------------------------------------
+    def set_text(self, text: str) -> None:
+        """Порт Set-BtnText (theme.ps1:676-679): смена подписи с перерисовкой."""
+        self._text = text
+        self.update()
+
     # ---- geometry --------------------------------------------------------
     def sizeHint(self):  # noqa: N802
         from PySide6.QtCore import QSize

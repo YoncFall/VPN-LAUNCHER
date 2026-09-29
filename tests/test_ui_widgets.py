@@ -28,6 +28,20 @@ def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(autouse=True)
+def _isolated_side_effects(monkeypatch, tmp_path):
+    """Этап 5: state.json - во временном каталоге, реестр прокси не трогаем.
+
+    MainWindow() восстанавливает состояние и при close() трогает прокси - в
+    тестах эти побочные эффекты на машине не нужны.
+    """
+    from vpn_launcher.core import state as state_mod
+
+    monkeypatch.setattr(state_mod, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr("vpn_launcher.ui.window.set_proxy_off", lambda: None)
+    monkeypatch.setattr("vpn_launcher.ui.window.set_proxy_on", lambda: None)
+
+
 def _nodes(n: int = 5) -> list[dict]:
     protos = ["vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic"]
     return [

@@ -11,12 +11,20 @@ Toolhelp32-снапшот (kernel32), чтобы не тянуть psutil.
   - уникальность PS `-notin` регистронезависима - повторяем через casefold;
   - Sort-Object - культурная сортировка, здесь casefold-эквивалент.
 
-Статус: get_running_exe_list - Этап 2; start/stop_sing_box - Этап 5.
+start_sing_box/stop_sing_box - порт запуска движка (VPN.ps1:541-575):
+`run -c <config> -D <root>`, stdout -> singbox.log, stderr -> singbox.log.err
+(ротация >2MB), скрытое окно (-WindowStyle Minimized), стоп - kill
+(Stop-Process -Force).
 """
 from __future__ import annotations
 
 import ctypes
+import subprocess
+import sys
 from ctypes import wintypes
+from pathlib import Path
+
+from vpn_launcher.paths import SING_BOX, install_root
 
 TH32CS_SNAPPROCESS = 0x00000002
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
@@ -78,9 +86,51 @@ def get_running_exe_list() -> list[str]:
     return sorted(out, key=str.casefold)  # PS Sort-Object (регистр не важен)
 
 
-def start_sing_box(config_path: str) -> int:
-    raise NotImplementedError("Этап 5: subprocess sing-box run -c <config>")
+_LOG_MAX = 2 * 1024 * 1024  # PS: если singbox.log > 2MB - удалить (VPN.ps1:547)
 
 
-def stop_sing_box() -> None:
-    raise NotImplementedError("Этап 5")
+def _rotate(path: Path) -> None:
+    try:
+        if path.exists() and path.stat().st_size > _LOG_MAX:
+            path.unlink()
+    except OSError:
+        pass  # как try/catch в PS - не мешаем запуску
+
+
+def start_sing_box(
+    config_path: str | Path, root: str | Path | None = None
+) -> subprocess.Popen:
+    """Запуск движка: sing-box run -c <cfg> -D <root> (VPN.ps1:552-555).
+
+    stdout -> <root>/singbox.log, stderr -> <root>/singbox.log.err (файлы
+    обрезаются при старте, как -RedirectStandardOutput у Start-Process), cwd =
+    корень установки, окно не создаётся. FileNotFoundError, если движок не
+    найден (Start-Process в PS тоже бросает).
+    """
+    base = Path(root) if root is not None else install_root()
+    out = base / "singbox.log"
+    err = base / "singbox.log.err"
+    _rotate(out)
+    _rotate(err)
+    kwargs: dict = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW (-WindowStyle Minimized)
+    with open(out, "wb") as fo, open(err, "wb") as fe:
+        return subprocess.Popen(
+            [str(SING_BOX), "run", "-c", str(config_path), "-D", str(base)],
+            cwd=str(base),
+            stdout=fo,
+            stderr=fe,
+            **kwargs,
+        )
+
+
+def stop_sing_box(proc: subprocess.Popen | None) -> None:
+    """Stop-Process -Force (VPN.ps1:579): kill, если процесс ещё жив."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.kill()
+    except OSError:
+        pass  # как try/catch в PS

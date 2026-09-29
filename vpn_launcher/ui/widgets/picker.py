@@ -30,7 +30,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRectF, QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -217,6 +217,8 @@ class _DropPopup(QWidget):
 class GamePicker(QWidget):
     """Поле с кнопкой-шевроном и выпадающим списком процессов."""
 
+    submitted = Signal()  # Enter в поле (Inner.KeyDown, theme.ps1:303 + VPN.ps1:301)
+
     def __init__(self, placeholder: str = "", parent=None) -> None:
         super().__init__(parent)
         self._placeholder = placeholder
@@ -379,6 +381,10 @@ class GamePicker(QWidget):
                     return True
                 if key in (Qt.Key.Key_Down, Qt.Key.Key_F4):
                     self.toggle_drop()
+                    return True
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    # Enter -> добавить исключение (VPN.ps1:301, SuppressKeyPress)
+                    self.submitted.emit()
                     return True
                 return False
             if t in (

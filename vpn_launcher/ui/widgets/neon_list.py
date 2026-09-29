@@ -180,6 +180,28 @@ class NeonList(QListView):
         """Заполнить текстовый список (исключения, VPN.ps1:271)."""
         self._rebuild(list(texts))
 
+    def add_item(self, text: str) -> None:
+        """Порт Items.Add (VPN.ps1:271/301)."""
+        item = QStandardItem(text)
+        item.setEditable(False)
+        self._model().appendRow(item)
+
+    def remove_row(self, row: int) -> None:
+        """Порт Items.RemoveAt (VPN.ps1:288).
+
+        После удаления выделения нет - WinForms не переносит SelectedItems
+        на соседнюю строку, и второй клик 'Удалить' уже no-op.
+        """
+        if 0 <= row < self._model().rowCount():
+            self._model().removeRow(row)
+            self.clearSelection()
+
+    def clear_rows(self) -> None:
+        """Порт Items.Clear (VPN.ps1:293)."""
+        self._model().clear()
+        self._model().setColumnCount(1)
+        self.clearSelection()
+
     def _rebuild(self, texts: list[str]) -> None:
         m = self._model()
         m.clear()

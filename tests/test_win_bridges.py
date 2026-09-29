@@ -229,8 +229,49 @@ class TestProc:
         assert folds == sorted(folds)          # PS Sort-Object
         assert all(x for x in items)
 
-    def test_start_stop_stay_stage5(self):
-        with pytest.raises(NotImplementedError):
-            proc.start_sing_box("config.json")
-        with pytest.raises(NotImplementedError):
-            proc.stop_sing_box()
+    def test_start_sing_box_args(self, monkeypatch, tmp_path):
+        """Этап 5: sing-box run -c <cfg> -D <root>, stdout/stderr в логи (552-555)."""
+        calls: dict = {}
+
+        class FakePopen:
+            def __init__(self, args, **kw):
+                calls["args"] = args
+                calls["kw"] = kw
+                self.pid = 4242
+                self.returncode = None
+                self.killed = False
+
+            def poll(self):
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+
+        monkeypatch.setattr(proc.subprocess, "Popen", FakePopen)
+        monkeypatch.setattr(proc, "SING_BOX", r"C:\eng\sing-box.exe")
+        p = proc.start_sing_box("config.json", tmp_path)
+        assert calls["args"] == [
+            r"C:\eng\sing-box.exe", "run", "-c", "config.json", "-D", str(tmp_path),
+        ]
+        assert calls["kw"]["cwd"] == str(tmp_path)
+        assert Path(calls["kw"]["stdout"].name).name == "singbox.log"
+        assert Path(calls["kw"]["stderr"].name).name == "singbox.log.err"
+        # живой процесс стопится kill'ом (Stop-Process -Force, 579)
+        proc.stop_sing_box(p)
+        assert p.killed
+        # мёртвый и None - no-op, без исключений
+        p.returncode = 0
+        proc.stop_sing_box(p)
+        proc.stop_sing_box(None)
+        assert p.killed  # второй stop не переключал флаг
+
+    def test_rotate_big_log(self, tmp_path):
+        """Лог >2MB удаляется перед запуском (VPN.ps1:547)."""
+        big = tmp_path / "singbox.log"
+        big.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+        proc._rotate(big)
+        assert not big.exists()
+        small = tmp_path / "small.log"
+        small.write_bytes(b"abc")
+        proc._rotate(small)
+        assert small.exists()
