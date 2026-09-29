@@ -18,7 +18,11 @@
     ConvertTo-Json; семантически идентично, sing-box принимает оба;
   - test_sing_box_config: stderr декодируется UTF-8 (в PS 5.1 Get-Content
     читал бы ANSI) - текст ошибки может отличаться, код совпадает;
-  - сравнение тегов в only_selected регистрозависимое, как PS `-contains`.
+  - сравнение тегов в only_selected регистрозависимое, как PS `-contains`;
+  - адрес TUN-инбаунда подбирается из свободных на этой машине вместо
+    зашитого 172.19.0.1/30 (см. win/tunaddr): занятый чужим VPN адрес ронял
+    sing-box на старте. Пул начинается с того же адреса - при отсутствии
+    конфликтов вывод совпадает с 1.0.6 (golden-файлы не переписывали).
 """
 from __future__ import annotations
 
@@ -32,6 +36,7 @@ from typing import Any, Iterable, Sequence
 from vpn_launcher.core.log import write_log
 from vpn_launcher.paths import CONFIG_FILE, SOCKS_PORT, SING_BOX
 from vpn_launcher.paths import install_root as _default_install_root
+from vpn_launcher.win.tunaddr import choose_tun_addresses
 
 # Процессы, которые ВСЕГДА идут напрямую, минуя туннель.
 # Игры и античиты не должны видеть подмену маршрута/адреса, а Steam и EAC/BE
@@ -162,11 +167,14 @@ def build_sing_box_config(
 
     inbounds: list[dict[str, Any]] = []
     if mode == "tun":
+        # адрес подбирается по свободным интерфейсам (win/tunaddr): зашитый
+        # 172.19.0.1/30 занят чужим VPN -> 'The object already exists' и TUN
+        # не поднимается. Первый кандидат исторический, паритет с 1.0.6.
         inbounds.append({
             "type": "tun",
             "tag": "tun-in",
             "interface_name": "vpn-launcher-tun",
-            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+            "address": choose_tun_addresses(),
             "mtu": 1500,
             "auto_route": True,
             "strict_route": True,
@@ -228,6 +236,9 @@ def new_sing_box_config(
         direct_apps = _uniq(list(GAME_SAFE_PROCESSES) + list(app_list))
         if direct_apps:
             write_log("  direct-exclude apps: " + ", ".join(direct_apps))
+        # какой адрес достался TUN-адаптеру - иначе конфликт с чужим VPN
+        # (win/tunaddr) виден только в singbox.log.err, который обрезается
+        write_log("tun address: " + ", ".join(cfg["inbounds"][0]["address"]))
     write_log(f"config written: {len(cfg['outbounds'])} outbounds, mode={mode}, final={cfg['route']['final']}")
     return p
 

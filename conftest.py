@@ -27,6 +27,17 @@ def _discover_sing_box() -> Path | None:
     return None
 
 
+@pytest.fixture(autouse=True)
+def _tun_address_probe(monkeypatch):
+    """Подбор TUN-адреса в тестах не смотрит на адаптеры этой машины.
+
+    Иначе golden-файлы и test_tun_inbound зависят от чужих VPN на машине
+    разработчика: Happ держит 172.19.0.1/30 -> конфиг собрался бы с
+    172.19.0.5/30, и сравнение с эталоном упало бы.
+    """
+    monkeypatch.setattr("vpn_launcher.win.tunaddr.assigned_addresses", lambda: set())
+
+
 @pytest.fixture
 def sing_box_exe() -> Path:
     """Путь к sing-box.exe; пропускает тест, если движок не найден."""

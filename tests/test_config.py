@@ -179,6 +179,16 @@ class TestWriteAndNew:
         cfg.new_sing_box_config(_nodes(), mode="proxy", path=tmp_path / "c.json")
         assert len(lines) == 1  # только "config written"
 
+    def test_new_sing_box_config_logs_tun_address(self, tmp_path, monkeypatch):
+        # адрес TUN-адаптера должен быть виден в журнале: конфликт с чужим VPN
+        # иначе остаётся только в singbox.log.err, который обрезается при старте
+        lines: list[str] = []
+        monkeypatch.setattr(cfg, "write_log", lines.append)
+        cfg.new_sing_box_config(_nodes(), mode="tun", path=tmp_path / "c.json")
+        assert len(lines) == 3  # direct-exclude + адрес + итог
+        assert lines[1] == "tun address: 172.19.0.1/30, fdfe:dcba:9876::1/126"
+        assert lines[-1] == "config written: 5 outbounds, mode=tun, final=proxy-group"
+
 
 class TestCheck:
     def test_missing_engine_raises_file_not_found(self, tmp_path):
