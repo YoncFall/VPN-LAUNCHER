@@ -109,10 +109,13 @@ class _DropRowDelegate(QStyledItemDelegate):
 
 
 class _HoverList(QListView):
-    """Список попапа: hover двигает выделение, MouseUp коммитит (528-532)."""
+    """Список попапа: hover двигает выделение, MouseUp коммитит (528-532).
 
-    def __init__(self, owner: "GamePicker") -> None:
-        super().__init__(owner)
+    owner - пикер (коммит), parent - попап (окно списка).
+    """
+
+    def __init__(self, owner: "GamePicker", parent: QWidget) -> None:
+        super().__init__(parent)
         self._owner = owner
         self.setMouseTracking(True)
 
@@ -152,7 +155,7 @@ class _DropPopup(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self._owner = owner
         self._closing_by_code = False
-        self.list = _HoverList(self)
+        self.list = _HoverList(self._owner, self)
         from PySide6.QtGui import QStandardItemModel
 
         self.list.setModel(QStandardItemModel(self.list))
