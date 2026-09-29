@@ -17,6 +17,8 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from vpn_launcher.ui.widgets.led import Led  # noqa: E402
@@ -191,6 +193,55 @@ class TestGamePicker:
         p.open_drop()
         assert not p._pop.grab().isNull()
         p.close_drop()
+
+    def test_typing_with_open_popup_filters_live(self, qapp):
+        """Набор при открытом списке фильтрует его живо (theme.ps1:300).
+
+        Qt::Popup перехватывает клавиши у поля - попап обязан переслать их
+        в поле, как в 1.0.6, где фокус всегда в TextBox.
+        """
+        p = GamePicker("ph")
+        p.resize(286, 30)
+        p.set_items(["adb.exe", "Ascon.CSC.exe", "conhost.exe", "csrss.exe"])
+        p.open_drop()
+        assert p.drop_open()
+        assert p._pop.item_count() == 4
+        # клавиши при открытом попапе уходят в него (активное окно)
+        QTest.keyClicks(p._pop, "cs")
+        assert p.text() == "cs"
+        assert p._pop.item_count() == 1  # остались только совпадения
+        assert p._pop.list.model().item(0).text() == "csrss.exe"
+        assert p.drop_open()  # есть совпадения - список остаётся открытым
+
+    def test_no_match_closes_and_returns_focus(self, qapp, monkeypatch):
+        """Нет совпадений - список закрывается, фокус возвращается в поле."""
+        p = GamePicker("ph")
+        p.resize(286, 30)
+        p.show()
+        p.set_items(["adb.exe", "csrss.exe"])
+        p.open_drop()
+        # offscreen не активирует окна (hasFocus там всегда False) -
+        # фиксируем вызов setFocus в close_drop программно
+        calls = []
+        monkeypatch.setattr(p._edit, "setFocus", lambda *a, **k: calls.append(1))
+        QTest.keyClicks(p._pop, "z")
+        assert p.text() == "z"
+        assert not p.drop_open()  # совпадений нет - закрыть (theme.ps1:401)
+        assert calls  # close_drop вернул фокус полю (набор продолжается)
+        QTest.keyClicks(p._edit, "z")  # печать после закрытия идёт в поле
+        assert p.text() == "zz"
+
+    def test_popup_escape_and_down_close(self, qapp):
+        """Escape/Down при открытом списке - закрыть (theme.ps1:304-305)."""
+        p = GamePicker("ph")
+        p.resize(286, 30)
+        p.set_items(["a.exe", "b.exe"])
+        p.open_drop()
+        QTest.keyClick(p._pop, Qt.Key.Key_Escape)
+        assert not p.drop_open()
+        p.open_drop()
+        QTest.keyClick(p._pop, Qt.Key.Key_Down)
+        assert not p.drop_open()
 
 
 # ---- Led (анимация, по просьбе - см. README «Отклонения») -------------------

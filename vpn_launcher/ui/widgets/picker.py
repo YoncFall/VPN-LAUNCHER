@@ -17,7 +17,8 @@
     (40,56,76)->(28,44,62) r6 + рамка Accent 1px, текст padding 12,
     цвет (206,212,226)/выделенный (230,234,242);
   - фильтр: префикс (StartsWith, lowerInvariant) по тексту поля, пусто - все;
-    совпадений нет - закрыть;
+    совпадений нет - закрыть; при открытом списке клавиши пересылаются в
+    поле (в 1.0.6 фокус всегда в TextBox) - набор сразу фильтрует список;
   - геометрия: под полем (y=bottom+2), h=min(8,n)*28+8, если не влезает -
     над полем; ширина = ширина пикера; репозиция при движении окна;
   - закрытие: клик вне пикера и попапа (Qt.Popup нативно, как
@@ -188,6 +189,18 @@ class _DropPopup(QWidget):
         else:
             self._owner._mark_auto_closed()
 
+    def keyPressEvent(self, e) -> None:  # noqa: N802
+        """Клавиши при открытом списке пересылаются в поле.
+
+        В 1.0.6 попап (WinForms, Show без активации) клавиатуру не брал -
+        фокус всегда в TextBox (theme.ps1:300-306): печатаем -> TextChanged
+        -> FilterPopup (живая фильтрация), Escape/Down/F4 -> обработчики
+        поля. Qt::Popup перехватывает клавиши сам, поэтому воспроизводим
+        маршрут вручную.
+        """
+        QApplication.sendEvent(self._owner._edit, e)
+        e.accept()
+
     def paintEvent(self, e) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -284,12 +297,16 @@ class GamePicker(QWidget):
         self._layout_popup()
         self._pop.show()
         self._pop.raise_()
+        self._edit.setFocus()  # фокус остаётся в поле (как в 1.0.6)
         self.update()
 
     def close_drop(self) -> None:
-        if self._pop.isVisible():
+        was_open = self._pop.isVisible()
+        if was_open:
             self._pop._closing_by_code = True
             self._pop.hide()
+            # фокус возвращается в поле - набор продолжается сразу
+            self._edit.setFocus()
         self.update()
 
     def _layout_popup(self) -> None:
