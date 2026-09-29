@@ -69,36 +69,14 @@ foreach ($f in @('LICENSE', 'NOTICE.md', 'README.md')) {
     if (Test-Path $p) { Copy-Item $p $stage }
 }
 
-# ---------- sing-box license notice (GPL-3.0 requirement) ----------
+# ---------- license notice: written by build-app.ps1, just verify ----------
 
 $sbExe = Join-Path $stage 'sing-box.exe'
 $sbSha = (Get-FileHash $sbExe -Algorithm SHA256).Hash.ToLower()
 $sbVer = (& $sbExe version 2>&1 | Select-Object -First 1) -replace '^sing-box version\s*', ''
-$notice = @"
-sing-box - included binary component
-====================================
-
-This program bundles sing-box.exe, which is a separate work by SagerNet,
-distributed under the GNU General Public License v3.0. It is NOT part of
-the VPN LAUNCHER source code and is covered by its own license.
-
-Version : $sbVer
-SHA-256 : $sbSha
-Source  : https://github.com/SagerNet/sing-box
-License : https://github.com/SagerNet/sing-box/blob/dev/LICENSE
-
-If you redistribute this program you must keep this file, keep sing-box
-unmodified, and offer the corresponding source of both components:
-
-  sing-box   : https://github.com/SagerNet/sing-box
-  launcher   : https://github.com/YoncFall/VPN-LAUNCHER
-
-You may obtain a copy of the GPL-3.0 from
-<https://www.gnu.org/licenses/gpl-3.0.txt> or
-<https://github.com/YoncFall/VPN-LAUNCHER/blob/main/LICENSE>.
-"@
-[System.IO.File]::WriteAllText((Join-Path $stage 'SING-BOX-LICENSE.txt'),
-    ($notice -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
+if (-not (Test-Path (Join-Path $stage 'SING-BOX-LICENSE.txt'))) {
+    throw 'SING-BOX-LICENSE.txt missing in dist. Re-run .\build-app.ps1 (it writes the notice).'
+}
 
 # ---------- payload zip ----------
 

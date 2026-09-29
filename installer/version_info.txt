@@ -15,7 +15,7 @@ VSVersionInfo(
   kids=[
     StringFileInfo([
       StringTable(
-        '041904b9',
+        '040904b0',
         [
           StringStruct('CompanyName', '@YoncFALL'),
           StringStruct('FileDescription', 'VPN LAUNCHER'),
@@ -27,6 +27,6 @@ VSVersionInfo(
         ]
       )
     ]),
-    VarFileInfo([VarStruct('Translation', [1049, 1201])])
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
 )
