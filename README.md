@@ -4,7 +4,7 @@
 Старая PowerShell-версия (v1.0.6) остаётся в `VPN-LAUNCHER-src` и продолжает
 поддерживаться — этот проект развивается рядом.
 
-## Статус: этап 1 (ядро) + этап 2 (Windows-мосты) + этап 4 (списки и пикер) + этап 5 (интеграция)
+## Статус: этапы 1–2, 4–6 (ядро, мосты, UI, интеграция, сборка и установщик)
 
 - Python 3.12 + PySide6 + pytest + PyInstaller установлены в `venv/`.
 - **Ядро портировано и покрыто тестами**: URI-хелперы, парсеры
@@ -39,13 +39,21 @@
   (kill движка + внешний IP раз в 30с), single-instance мьютекс в `main()`.
   Сеть идёт в `QThread`-воркерах (`workers/`), диалоги в тестах подменяются
   записью — покрыто 24 offscreen-тестами.
-- Дальше: сборка PyInstaller (этап 6), сверка с 1.0.6 (этап 7).
+- **Сборка и установщик (этап 6)**: PyInstaller onedir (`VPNLauncher.spec`,
+  `build-app.ps1`) — Python+PySide6 внутри, `sing-box.exe` кладётся рядом с
+  exe; одиночный установщик (`build-installer.ps1` → `dist\VPN-LAUNCHER-<версия>-Setup.exe`)
+  — порт `Setup.cs` 1.0.6: один файл, всё вшито (ничего не докачивается),
+  ставит в `%LOCALAPPDATA%\Programs\VPNLauncher` без админа, ярлыки на стол и
+  в «Пуск», запись в «Программы и компоненты», та же копия работает
+  удалалкой. Проверено вживую: установка → запуск из установки → удаление
+  без остатка (папка/ярлыки/реестр чисты).
+- Дальше: сверка с 1.0.6 (этап 7).
 
 ## Запуск
 
 ```powershell
 .\run.ps1                                   # окно приложения
-venv\Scripts\python.exe -m pytest           # тесты (182)
+venv\Scripts\python.exe -m pytest           # тесты (206)
 
 # переснять golden-эталон с текущей PS-версии (после правок core.ps1);
 # -SingBox необязателен: без него пропускается только прогон `sing-box check`
@@ -57,12 +65,29 @@ $env:SING_BOX_EXE = "C:\...\sing-box.exe"
 
 # снимок окна в файл и выход (скриншотная сверка с 1.0.6)
 $env:VPN_SHOT = "C:\Temp\shot.png"; venv\Scripts\python.exe app.py
+
+# сборка релиза (этап 6): onedir + portable zip + одиночный установщик
+powershell -ExecutionPolicy Bypass -File .\build-app.ps1         # dist\VPNLauncher + zip
+powershell -ExecutionPolicy Bypass -File .\build-installer.ps1   # dist\...-Setup.exe
 ```
+
+Для пользователя: скачать один `...Setup.exe`, запустить (SmartScreen:
+«Подробнее» → «Всё равно запустить»), «Установить» — без администратора
+и без интернета. Удаление — ярлык «Удалить VPN ЛАУНЧЕР» в меню «Пуск»
+или запись в «Программы и компоненты» (тот же файл, `uninstall.exe`).
 
 ## Структура
 
 ```
 app.py                 точка входа (+ режим VPN_SHOT)
+VPNLauncher.spec       spec PyInstaller (onedir)  [ГОТОВО]
+build-app.ps1          сборка приложения и zip    [ГОТОВО]
+build-installer.ps1    сборка Setup.exe           [ГОТОВО]
+installer/
+  Setup.cs             установщик (порт 1.0.6)    [ГОТОВО]
+  app.ico              иконка exe и установщика   [ГОТОВО]
+  app.manifest         asInvoker/DPI              [ГОТОВО]
+  version_info.txt     шаблон версии exe          [ГОТОВО]
 vpn_launcher/
   paths.py             корень установки, state/config/log, SOCKS-порт
   core/                логика без Qt (тестируется pytest)
@@ -98,6 +123,7 @@ vpn_launcher/
 tests/                 pytest
   fixtures/            подписки-фикстуры     [ГОТОВО]
   golden/              эталон вывода PS 1.0.6 [ГОТОВО]
+  test_build_layout.py сборка/установщик      [ГОТОВО]
 tools/
   make_fixtures.py     генератор фикстур     [ГОТОВО]
   make_golden.ps1      снимок golden с core.ps1 [ГОТОВО]
@@ -106,7 +132,8 @@ tools/
 ## Правило поведения
 
 Поведение VPN обязано совпадать с 1.0.6: конфиги sing-box сверяются по
-golden-файлам, `sing-box.exe` и установщик не меняются.
+golden-файлам; `sing-box.exe`, `Setup.cs` и `install.bat` самой 1.0.6 не
+меняются — свой установщик портирован отдельно в `installer/` (см. ниже).
 
 ### Отклонения от 1.0.6 (все помечены в комментариях кода)
 
@@ -134,6 +161,21 @@ Windows-мосты (на VPN не влияют):
   psutil) — сверен с `Get-RunningExeList` на этом ПК: идентично 87/87;
 - `acquire_instance()` идемпотентен в рамках одного процесса (Host.cs
   одноразовый, такой case там не возникает).
+
+Установка (этап 6, порт `installer/Setup.cs` из 1.0.6):
+
+- рекурсивное копирование (`CopyTree`) — раскладка onedir (дерево
+  `VPNLauncher.exe` + `_internal\`), в 1.0.6 копировались только файлы
+  верхнего уровня;
+- убрана проверка PowerShell 5.1 и пункт «Нет PowerShell 5.1» — PySide6-версии
+  PowerShell не нужен (и Python тоже: всё встроено в exe);
+- после копирования проверяются `VPNLauncher.exe` + `sing-box.exe` (вместо
+  `VPN.ps1`);
+- `StopApp` дополнительно гасит `sing-box`, лежащий в целевой папке (чужие
+  копии не трогает);
+- SmartScreen: exe не подписан, при первом запуске Windows показывает
+  предупреждение «Неизвестный издатель» («Подробнее» → «Всё равно запустить»)
+  — как у Setup.exe 1.0.6.
 
 Сеть и потоки (этап 5, тексты/порядок статусов те же):
 
