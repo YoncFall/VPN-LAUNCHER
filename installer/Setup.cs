@@ -35,7 +35,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "2.0.1";
+    const string Version = "2.0.2";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
