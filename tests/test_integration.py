@@ -146,6 +146,170 @@ class TestExclusions:
         assert state_mod.load_state()["appList"] == []
 
 
+# ---- переключатель режима списка (новое, 30.09.2026) ------------------------
+
+
+class TestAppModeSwitch:
+    """«Исключения» ↔ «Только выбранные»: один список, две семантики.
+
+    Дефолт обязан остаться режимом exclude (паритет с PS 1.0.6), включать
+    include - только осознанным кликом; режим живёт отдельно от состава
+    списка (state['appMode']), поэтому переключение не переписывает appList.
+    """
+
+    def test_default_is_exclude_with_ps_text(self, qapp, win):
+        assert win._app_mode() == "exclude"
+        assert win.radio_excl.checked() and not win.radio_vpnonly.checked()
+        assert win.lbl_appsec.text() == "ИСКЛЮЧЕНИЯ"
+        assert "Список процессов обновляется" in win.lbl_apps_hint.text()
+
+    def test_switch_persists_and_rewrites_labels(self, qapp, win):
+        win.radio_vpnonly.toggled.emit()
+        assert win._app_mode() == "include"
+        assert win.radio_vpnonly.checked() and not win.radio_excl.checked()
+        assert win.lbl_appsec.text() == "ЧЕРЕЗ VPN"
+        assert "Только эти процессы" in win.lbl_apps_hint.text()
+        assert win.state["appMode"] == "include"
+        assert state_mod.load_state()["appMode"] == "include"
+        # состав списка при переключении не трогаем
+        win.list_excl.add_item("mygame.exe")
+        win.radio_excl.toggled.emit()
+        assert win._app_mode() == "exclude"
+        assert win.lbl_appsec.text() == "ИСКЛЮЧЕНИЯ"
+        assert win.state["appList"] == ["mygame.exe"]
+        assert state_mod.load_state()["appMode"] == "exclude"
+
+    def test_exclude_still_rejects_game_safe(self, qapp, win):
+        """Поведение 1.0.6 не едет: в exclude игры исключены автоматически."""
+        win.picker_proc.setText("steam")
+        win._excl_add()
+        assert win.list_excl.item_texts() == []
+        assert win.lbl_status.text() == "steam.exe и так исключён автоматически"
+
+    def test_include_allows_game_safe_names(self, qapp, win):
+        """В include базовый список игр не участвует - запрет был бы ложью:
+        пользователь вправе пустить Steam через VPN осознанно."""
+        win.radio_vpnonly.toggled.emit()
+        win.picker_proc.setText("StEaM.EXE")
+        win._excl_add()
+        assert win.list_excl.item_texts() == ["StEaM.EXE"]
+        assert win.lbl_status.text() == "Добавлено в список через VPN: StEaM.EXE"
+        assert state_mod.load_state()["appMode"] == "include"
+
+    def test_include_clear_message_differs(self, qapp, win):
+        win.radio_vpnonly.toggled.emit()
+        win.list_excl.add_item("a.exe")
+        win._excl_clr()
+        assert win.list_excl.item_texts() == []
+        assert win.lbl_status.text() == "Список процессов через VPN очищен"
+
+    def test_restore_include_from_state(self, qapp, tmp_path):
+        state_mod.save_state(
+            {
+                "subUrl": "https://sub.example/x",
+                "mode": "tun",
+                "selected": "",
+                "appList": ["x.exe"],
+                "appMode": "include",
+                "lastNodes": [],
+                "autoUrlTest": True,
+            }
+        )
+        from vpn_launcher.ui.window import MainWindow
+
+        w = MainWindow()
+        try:
+            assert w._app_mode() == "include"
+            assert w.lbl_appsec.text() == "ЧЕРЕЗ VPN"
+            assert w.list_excl.item_texts() == ["x.exe"]
+        finally:
+            w.close()
+
+    def test_restore_state_without_app_mode_is_exclude(self, qapp, tmp_path):
+        """Старый state.json без поля (формат PS 1.0.6) читается как раньше."""
+        state_mod.save_state(
+            {
+                "subUrl": "",
+                "mode": "tun",
+                "selected": "",
+                "appList": ["x.exe"],
+                "lastNodes": [],
+                "autoUrlTest": True,
+            }
+        )
+        from vpn_launcher.ui.window import MainWindow
+
+        w = MainWindow()
+        try:
+            assert w._app_mode() == "exclude"
+            assert w.lbl_appsec.text() == "ИСКЛЮЧЕНИЯ"
+            assert w.list_excl.item_texts() == ["x.exe"]
+        finally:
+            w.close()
+
+    def test_empty_include_list_stops_connect_when_declined(self, qapp, win):
+        """Пустой include даёт route.final=direct: туннель поднимется и не
+        захватит ничего. Спрашиваем до UAC, а не после."""
+        win.radio_vpnonly.toggled.emit()
+        confirms: list = []
+        win._msg_confirm = lambda text, title="": (
+            confirms.append((text, title)) or False
+        )
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+        win._connect_click()
+        assert len(confirms) == 1 and "Список пуст" in confirms[0][0]
+        assert win.lbl_status.text() == "Отменено: добавь процессы в список"
+        assert win.btn_connect.isEnabled()
+
+    def test_connect_passes_app_mode_to_config(self, qapp, win, monkeypatch):
+        """Режим обязан дойти до сборки конфига, а не остаться в UI."""
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        seen: list = []
+
+        def fake_build(nodes, sel, mode, apps, *a, **k):
+            seen.append({"mode": mode, "apps": apps, "app_mode": k.get("app_mode")})
+            return "cfg.json"
+
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config", fake_build
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.install_kill_switch", lambda addrs: True
+        )
+        win.radio_vpnonly.toggled.emit()
+        win.list_excl.add_item("mygame.exe")
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert seen and seen[0]["app_mode"] == "include"
+        assert seen[0]["mode"] == "tun"
+        assert seen[0]["apps"] == ["mygame.exe"]
+        assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
+
+
 # ---- загрузка подписки (VPN.ps1:120-156) -----------------------------------
 
 

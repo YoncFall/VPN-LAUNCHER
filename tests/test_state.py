@@ -28,3 +28,22 @@ def test_roundtrip(tmp_path):
     # файл читается как настоящий JSON (совместимость с форматом PS)
     raw = json.loads(p.read_text(encoding="utf-8"))
     assert raw["mode"] == "tun"
+
+
+def test_app_mode_defaults_to_exclude():
+    """Режим списка процессов: дефолт - поведение PS 1.0.6 (исключения)."""
+    assert DEFAULT_STATE["appMode"] == "exclude"
+
+
+def test_state_without_app_mode_stays_without_it(tmp_path):
+    """Старый файл (PS 1.0.6) не достраивается полями: молча читается как раньше.
+
+    Значение подставляет UI (_restore_state): так совместимость видна явно,
+    а load_state остаётся портом Get-VpnState без домысливания.
+    """
+    p = tmp_path / "state.json"
+    st = dict(DEFAULT_STATE)
+    st.pop("appMode")
+    save_state(st, p)
+    loaded = load_state(p)
+    assert "appMode" not in loaded

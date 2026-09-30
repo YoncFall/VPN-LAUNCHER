@@ -28,7 +28,20 @@
     strict_route убивал DNS на время работы туннеля (WFP режет порт 53 вне
     туннеля), а default 0.0.0.0/0 чужого VPN (Happ, метрика 0) перехватывал
     системный трафик. Golden-файлы остаются эталоном PS 1.0.6 - отклонение
-    нормализуется в tests/test_golden.py (_ps_parity_view).
+    нормализуется в tests/test_golden.py (_ps_parity_view);
+  - app_mode="include" (30.09.2026, новая фича, не порт PS): список
+    процессов работает зеркально - через VPN идут ТОЛЬКО перечисленные,
+    всё остальное идёт напрямую (route.final = direct). PS 1.0.6 такого
+    режима не знал, поэтому паритет касается только app_mode="exclude"
+    (дефолт) - golden-файлы не переписывали.
+
+Как режимы переключаются и почему kill switch не меняется:
+    в TUN весь (не-локальный) трафик захватывают маршруты /1 и уходит в
+    sing-box; там правило по process_name решает, direct это или прокси.
+    То есть единственная точка выхода - сам движок, и kill switch (wfp.py)
+    блокирует обход, а не конкретное приложение. Инвертировать режим можно
+    исключительно внутри конфига: меняются правило и route.final, фильтры
+    WFP остаются ровно теми же.
 """
 from __future__ import annotations
 
@@ -59,6 +72,13 @@ GAME_SAFE_PROCESSES: tuple[str, ...] = (
 
 DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204"
 
+# Режимы работы списка процессов (см. docstring модуля):
+#   exclude - классика PS 1.0.6: перечисленные идут мимо VPN, остальное через;
+#   include - зеркало: через VPN идут только перечисленные, остальное напрямую.
+APP_MODE_EXCLUDE = "exclude"
+APP_MODE_INCLUDE = "include"
+APP_MODES = (APP_MODE_EXCLUDE, APP_MODE_INCLUDE)
+
 # Ключи ноды, переносимые в outbound как есть (core.ps1:486)
 _NODE_KEYS = (
     "uuid", "password", "method", "alter_id", "flow", "plugin", "plugin_opts",
@@ -87,6 +107,19 @@ def _uniq(items: Iterable[str]) -> list[str]:
     return out
 
 
+def _routed_apps(app_mode: str, app_list: Sequence[str]) -> list[str]:
+    """Процессы правила per-app для текущего режима списка.
+
+    exclude: GAME_SAFE + выбор пользователя (все перечисленные -> direct);
+    include: только выбор пользователя (только они -> proxy-group). Базовый
+    список игр/античитов в include не участвует - там они и так идут
+    напрямую (final=direct), а пользователь вправе выбрать Steam осознанно.
+    """
+    if app_mode == APP_MODE_INCLUDE:
+        return _uniq(list(app_list))
+    return _uniq(list(GAME_SAFE_PROCESSES) + list(app_list))
+
+
 def build_sing_box_config(
     nodes: Sequence[dict],
     selected: Sequence[str] = (),
@@ -94,6 +127,7 @@ def build_sing_box_config(
     app_list: Sequence[str] = (),
     test_url: str = DEFAULT_TEST_URL,
     only_selected: bool = False,
+    app_mode: str = APP_MODE_EXCLUDE,
     *,
     install_root: Path | str | None = None,
 ) -> dict[str, Any]:
@@ -101,9 +135,15 @@ def build_sing_box_config(
 
     install_root - корень для cache.db (по умолчанию paths.install_root(),
     как $script:InstallRoot в PS); для тестов можно передать фиктивный путь.
+    app_mode - режим списка процессов (APP_MODES); дефолт паритетен с PS 1.0.6.
     """
     if mode not in ("tun", "proxy"):
         raise ConfigError(f"Неизвестный режим: {mode!r} (ожидается 'tun' или 'proxy')")
+    if app_mode not in APP_MODES:
+        raise ConfigError(
+            f"Неизвестный режим списка процессов: {app_mode!r} "
+            f"(ожидается 'exclude' или 'include')"
+        )
 
     out: list[dict[str, Any]] = []
     tags: list[str] = []
@@ -150,20 +190,29 @@ def build_sing_box_config(
         })
     else:
         raise ConfigError("Нет ни одного сервера")
-    final = "proxy-group"
 
     # маршрутизация
     rules: list[dict[str, Any]] = [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}]
 
-    # per-app: перечисленные приложения идут НАПРЯМУЮ (важно для игр/античита)
+    # per-app: один список, два направления (см. докстринг модуля).
+    #   exclude - перечисленные идут НАПРЯМУЮ (важно для игр/античита),
+    #             всё прочее собирает route.final=proxy-group, т.е. через VPN;
+    #   include - наоборот: только перечисленные уходят в proxy-group,
+    #             route.final=direct, поэтому остальное идёт мимо VPN.
+    # Правило строится только в TUN - в системном прокси источник процесса
+    # неизвестен (как и раньше: см. test_proxy_inbounds_and_socks_port).
     # action обязателен с sing-box 1.11, outbound внутри правила помечен deprecated
-    direct_apps = _uniq(list(GAME_SAFE_PROCESSES) + list(app_list))
-    if mode == "tun" and direct_apps:
-        rules.append({
-            "action": "route",
-            "process_name": direct_apps,
-            "outbound": "direct",
-        })
+    final = "proxy-group"
+    if mode == "tun":
+        routed_apps = _routed_apps(app_mode, app_list)
+        if routed_apps:
+            rules.append({
+                "action": "route",
+                "process_name": routed_apps,
+                "outbound": "direct" if app_mode == APP_MODE_EXCLUDE else "proxy-group",
+            })
+        if app_mode == APP_MODE_INCLUDE:
+            final = "direct"
 
     # локальные сети идём напрямую (в TUN это обязательно)
     rules.append({
@@ -273,24 +322,41 @@ def new_sing_box_config(
     app_list: Sequence[str] = (),
     test_url: str = DEFAULT_TEST_URL,
     only_selected: bool = False,
+    app_mode: str = APP_MODE_EXCLUDE,
     *,
     install_root: Path | str | None = None,
     path: Path | str | None = None,
 ) -> Path:
     """New-SingBoxConfig дословно: сборка + запись файла + лог -> путь к config.json."""
     cfg = build_sing_box_config(
-        nodes, selected, mode, app_list, test_url, only_selected, install_root=install_root
+        nodes, selected, mode, app_list, test_url, only_selected, app_mode,
+        install_root=install_root,
     )
     p = write_config(cfg, path)
-    # PS логирует этот список при сборке правил (core.ps1:530)
+    # PS логирует этот список при сборке правил (core.ps1:530); в include
+    # режиме это уже не «исключения», поэтому и префикс другой - иначе в
+    # журнале видно ровно то, что делает конфиг
     if mode == "tun":
-        direct_apps = _uniq(list(GAME_SAFE_PROCESSES) + list(app_list))
-        if direct_apps:
-            write_log("  direct-exclude apps: " + ", ".join(direct_apps))
+        routed_apps = _routed_apps(app_mode, app_list)
+        if routed_apps:
+            head = (
+                "  vpn-include apps: "
+                if app_mode == APP_MODE_INCLUDE
+                else "  direct-exclude apps: "
+            )
+            write_log(head + ", ".join(routed_apps))
         # какой адрес достался TUN-адаптеру - иначе конфликт с чужим VPN
         # (win/tunaddr) виден только в singbox.log.err, который обрезается
         write_log("tun address: " + ", ".join(cfg["inbounds"][0]["address"]))
-    write_log(f"config written: {len(cfg['outbounds'])} outbounds, mode={mode}, final={cfg['route']['final']}")
+    summary = (
+        f"config written: {len(cfg['outbounds'])} outbounds, "
+        f"mode={mode}, final={cfg['route']['final']}"
+    )
+    if mode == "tun" and app_mode == APP_MODE_INCLUDE:
+        # хвост только для нового режима: строка дефолтного режима остаётся
+        # байт-в-байт паритетной с PS 1.0.6 (сверяют тесты)
+        summary += ", apps=include"
+    write_log(summary)
     return p
 
 

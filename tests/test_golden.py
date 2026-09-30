@@ -88,3 +88,20 @@ def test_generated_config_passes_sing_box_check(name: str, kwargs: dict, tmp_pat
     p = cfg.write_config(built, tmp_path / name)
     ok, err = cfg.test_sing_box_config(p, sing_box=sing_box_exe)
     assert ok, f"sing-box check failed for {name}: {err}"
+
+
+@pytest.mark.parametrize("app_mode", ["exclude", "include"])
+def test_both_app_modes_pass_sing_box_check(app_mode: str, tmp_path, sing_box_exe):
+    """Оба режима списка обязаны приниматься движком.
+
+    include (30.09.2026) пишет route.final=direct и правило process_name на
+    proxy-group - конфигурации, которую PS 1.0.6 никогда не выдавал, поэтому
+    здесь только проверка приёмки движком, а не сверка с golden.
+    """
+    built = cfg.build_sing_box_config(
+        _nodes(), mode="tun", app_list=("mygame.exe", "steam.exe"),
+        app_mode=app_mode, install_root="vpn-golden-root",
+    )
+    p = cfg.write_config(built, tmp_path / f"config-app-{app_mode}.json")
+    ok, err = cfg.test_sing_box_config(p, sing_box=sing_box_exe)
+    assert ok, f"sing-box check failed for app_mode={app_mode}: {err}"

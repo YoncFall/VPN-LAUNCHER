@@ -3,6 +3,11 @@
 
 Файл: <install root>/state.json. Поля (точно как в PS):
     subUrl, mode ('tun'), selected, appList, lastNodes, autoUrlTest.
+Поле вне PS 1.0.6 (новое, 30.09.2026):
+    appMode - режим списка процессов, 'exclude' | 'include'
+    (см. core/config.py). Дефолт 'exclude' - поведение 1.0.6 сохранено;
+    старый файл без этого поля читается как 'exclude', поэтому
+    load_state НЕ достраивает дефолты - несовместимость не нужна.
 
 Безопасность (01.10.2026, «фулл-защита»): subUrl (ссылка подписки - это
 доступ к нодам) шифруется DPAPI Windows, CurrentUser: на диске значение
@@ -111,6 +116,7 @@ def _default_state() -> dict[str, Any]:
         "mode": "tun",
         "selected": "",
         "appList": [],
+        "appMode": "exclude",
         "lastNodes": [],
         "autoUrlTest": True,
     }

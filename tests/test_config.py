@@ -8,6 +8,8 @@ import pytest
 
 from vpn_launcher.core import config as cfg  # модуль, чтобы pytest не собрал test_sing_box_config
 from vpn_launcher.core.config import (
+    APP_MODE_EXCLUDE,
+    APP_MODE_INCLUDE,
     GAME_SAFE_PROCESSES,
     ConfigError,
     build_sing_box_config,
@@ -146,6 +148,88 @@ class TestModesAndRules:
         assert "STEAM.EXE" in proc_rule["process_name"]
 
 
+class TestAppModeInclude:
+    """Режим include (30.09.2026, новая фича): через VPN идут только выбранные.
+
+    Зеркало exclude: меняются правило по process_name и route.final. Kill
+    switch при этом не трогается - единственная точка выхода всё равно
+    сам движок (см. докстринг core/config.py), так что WFP остаётся прежним,
+    и тесты ниже ограничиваются конфигом.
+    """
+
+    def test_selected_go_to_group_and_the_rest_to_direct(self):
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        rules = c["route"]["rules"]
+        proc_rule = next(r for r in rules if "process_name" in r)
+        assert proc_rule["action"] == "route"
+        assert proc_rule["outbound"] == "proxy-group"
+        assert proc_rule["process_name"] == ["mygame.exe"]
+        # финал инвертирован: не выбранные собирает direct, а не прокси
+        assert c["route"]["final"] == "direct"
+
+    def test_game_safe_not_pulled_into_vpn_implicitly(self):
+        # базовый список игр в include не попадает: они и так идут напрямую
+        c = build_sing_box_config(_nodes(), mode="tun", app_mode=APP_MODE_INCLUDE)
+        assert not any("process_name" in r for r in c["route"]["rules"])
+        assert c["route"]["final"] == "direct"
+
+    def test_rule_order_is_same_as_exclude(self):
+        # порядок правил не меняется: sniff, dns, per-app, локальные сети
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        rules = c["route"]["rules"]
+        assert [r.get("action") for r in rules[:2]] == ["sniff", "hijack-dns"]
+        assert "process_name" in rules[2]
+        assert rules[-1]["ip_cidr"][0] == "127.0.0.0/8"
+        assert rules[-1]["outbound"] == "direct"
+
+    def test_default_is_exclude_and_identical_to_explicit(self):
+        # паритет с PS 1.0.6: дефолт обязан дать ровно прежний конфиг
+        implicit = build_sing_box_config(_nodes(), mode="tun", app_list=("mygame.exe",))
+        explicit = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_EXCLUDE,
+        )
+        assert implicit == explicit
+        assert implicit["route"]["final"] == "proxy-group"
+
+    def test_exclude_still_sends_selected_and_game_safe_to_direct(self):
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_EXCLUDE,
+        )
+        proc_rule = next(r for r in c["route"]["rules"] if "process_name" in r)
+        assert proc_rule["outbound"] == "direct"
+        assert "steam.exe" in proc_rule["process_name"]
+
+    def test_proxy_mode_ignores_app_mode(self):
+        # в системном прокси правила процессов нет (как и раньше), а final
+        # обязан остаться proxy-group - иначе сам прокси перестанет работать
+        c = build_sing_box_config(
+            _nodes(), mode="proxy", app_list=("mygame.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        assert not any("process_name" in r for r in c["route"]["rules"])
+        assert c["route"]["final"] == "proxy-group"
+
+    def test_unknown_app_mode_raises(self):
+        with pytest.raises(ConfigError, match="режим списка процессов"):
+            build_sing_box_config(_nodes(), app_mode="bothways")
+
+    def test_include_dedups_like_select_object_unique(self):
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("a.exe", "a.exe", "b.exe"),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        proc_rule = next(r for r in c["route"]["rules"] if "process_name" in r)
+        assert proc_rule["process_name"] == ["a.exe", "b.exe"]
+
+
 class TestCachePath:
     def test_explicit_install_root(self):
         c = build_sing_box_config(_nodes(), install_root="vpn-golden-root")
@@ -196,6 +280,34 @@ class TestWriteAndNew:
         cfg.new_sing_box_config(_nodes(), mode="tun", path=tmp_path / "c.json")
         assert len(lines) == 3  # direct-exclude + адрес + итог
         assert lines[1] == "tun address: 172.19.0.1/30, fdfe:dcba:9876::1/126"
+        assert lines[-1] == "config written: 5 outbounds, mode=tun, final=proxy-group"
+
+
+    def test_new_sing_box_config_include_logs_and_marks_final(self, tmp_path, monkeypatch):
+        # префикс иной: в include это не «исключения», и в журнале должно быть
+        # видно, чем собран конфиг (final=direct иначе выглядит как поломка)
+        lines: list[str] = []
+        monkeypatch.setattr(cfg, "write_log", lines.append)
+        cfg.new_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_INCLUDE, path=tmp_path / "c.json",
+        )
+        assert lines[0] == "  vpn-include apps: mygame.exe"
+        assert lines[1] == "tun address: 172.19.0.1/30, fdfe:dcba:9876::1/126"
+        assert lines[-1] == (
+            "config written: 5 outbounds, mode=tun, final=direct, apps=include"
+        )
+
+    def test_new_sing_box_config_exclude_log_stays_byte_identical(self, tmp_path, monkeypatch):
+        # строка дефолтного режима не должна получить ни хвоста, ни иного
+        # префикса - её сверяют с PS 1.0.6
+        lines: list[str] = []
+        monkeypatch.setattr(cfg, "write_log", lines.append)
+        cfg.new_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_EXCLUDE, path=tmp_path / "c.json",
+        )
+        assert lines[0].startswith("  direct-exclude apps: ")
         assert lines[-1] == "config written: 5 outbounds, mode=tun, final=proxy-group"
 
 

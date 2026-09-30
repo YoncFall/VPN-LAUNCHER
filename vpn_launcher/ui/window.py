@@ -11,6 +11,10 @@ Install-GameCorners), шапка с неоновым логотипом, гра�
 пинг (379-436), исключения (226-302), подключение/отключение/проверка
 конфига (458-611), таймер 10с (615-641), --autoconnect (655-687), закрытие
 окна (643-651). Отклонения (в комментариях у мест):
+  - переключатель режима списка («Всё, кроме списка» / «Только выбранные»,
+    30.09.2026) занял строку заголовка секции ИСКЛЮЧЕНИЯ: хинт про игры
+    описывал только режим exclude, поэтому переехал вниз и стал зависеть
+    от режима (см. _apply_app_mode); геометрия карточки не менялась;
   - загрузка/пинг/внешний IP идут в QThread - в PS это runspace/DoEvents
     (экран не подвисает, статусы и их порядок те же);
   - при закрытии окна воркеры ждутся до 2с, затем terminate - порт
@@ -33,6 +37,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
 
 from vpn_launcher import __version__
 from vpn_launcher.core.config import (
+    APP_MODE_EXCLUDE,
+    APP_MODE_INCLUDE,
     GAME_SAFE_PROCESSES,
     new_sing_box_config,
     purge_config_file,
@@ -235,12 +241,24 @@ class MainWindow(QWidget):
         div3 = Divider(card)
         div3.setGeometry(18, 412, 556, 2)
 
-        # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) ---
-        _label(card, "ИСКЛЮЧЕНИЯ", 18, 424, 320, 16, theme.TEXT_DIM, theme.f_caps())
-        _label(
-            card,
-            "игры, Steam и античиты исключены автоматически",
-            300, 424, 274, 16, theme.TEXT_DIM, theme.f_sub(), "right",
+        # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) + режим работы списка (новое, 30.09.2026) ---
+        # Справа в этой строке раньше висел статический хинт «игры, Steam и
+        # античиты исключены автоматически» - он описывал только режим
+        # exclude. Место отдано переключателю (тот же GameRadio, что и в
+        # РЕЖИМ), а зависимый от режима текст переехал в lbl_apps_hint.
+        # Геометрия строки не изменилась: 18..574, высота 16, карточка цела.
+        self.lbl_appsec = _label(
+            card, "ИСКЛЮЧЕНИЯ", 18, 424, 126, 16, theme.TEXT_DIM, theme.f_caps()
+        )
+        self.radio_excl = GameRadio("Всё, кроме списка", True, card)
+        self.radio_excl.setGeometry(148, 424, 206, 16)
+        self.radio_vpnonly = GameRadio("Только выбранные", False, card)
+        self.radio_vpnonly.setGeometry(364, 424, 210, 16)
+        self.radio_excl.toggled.connect(
+            lambda: self._select_app_mode(APP_MODE_EXCLUDE)
+        )
+        self.radio_vpnonly.toggled.connect(
+            lambda: self._select_app_mode(APP_MODE_INCLUDE)
         )
         self.frame_excl = GameFrame(10, card)
         self.frame_excl.setGeometry(18, 444, 260, 84)
@@ -262,7 +280,7 @@ class MainWindow(QWidget):
         # Enter в поле = добавить (VPN.ps1:280-285), даблклик = удалить (298)
         self.picker_proc.submitted.connect(self._excl_add)
         self.list_excl.doubleClicked.connect(lambda *_: self._excl_del())
-        _label(
+        self.lbl_apps_hint = _label(
             card,
             "Список процессов обновляется при запуске. В поле можно вписать имя .exe вручную.",
             18, 550, 556, 16, theme.TEXT_DIM, theme.f_sub(),
@@ -304,6 +322,8 @@ class MainWindow(QWidget):
         for a in self.state.get("appList") or []:
             if a:
                 self.list_excl.add_item(str(a))
+        # старый state.json без appMode читается как 'exclude' (поведение 1.0.6)
+        self._apply_app_mode(str(self.state.get("appMode") or APP_MODE_EXCLUDE))
         self.picker_proc.set_items(get_running_exe_list())  # Fill-ProcCombo
         self._status("Готов")
         title = "VPN ЛАУНЧЕР BY @YoncFALL"
@@ -361,6 +381,36 @@ class MainWindow(QWidget):
             if a:
                 out.append(a)
         return out
+
+    def _app_mode(self) -> str:
+        """'include' - через VPN идут только выбранные процессы; иначе 'exclude'.
+
+        Режим хранится не в списке, а в отдельном флаге state['appMode']:
+        один и тот же список у двух режимов разная семантика (см.
+        core/config.py), поэтому менять его можно без правки состава.
+        """
+        return APP_MODE_INCLUDE if self.radio_vpnonly.checked() else APP_MODE_EXCLUDE
+
+    def _apply_app_mode(self, app_mode: str) -> None:
+        """Поставить переключатель и подписать секцию под режим (без записи)."""
+        include = app_mode == APP_MODE_INCLUDE
+        self.radio_excl.set_checked(not include)
+        self.radio_vpnonly.set_checked(include)
+        # заголовок секции - это и есть подпись к списку: в include это уже
+        # не «исключения», а перечень процессов, пущенных через VPN
+        self.lbl_appsec.setText("ЧЕРЕЗ VPN" if include else "ИСКЛЮЧЕНИЯ")
+        self.lbl_apps_hint.setText(
+            "Только эти процессы пойдут через VPN, остальные работают напрямую."
+            if include
+            else "Список процессов обновляется при запуске. "
+            "В поле можно вписать имя .exe вручную."
+        )
+
+    def _select_app_mode(self, app_mode: str) -> None:
+        """Клик по переключателю: применить режим и сохранить его со списком."""
+        self._apply_app_mode(app_mode)
+        self._save_excl()
+        write_log(f"app mode selected: {app_mode}")
 
     def _select_mode(self, mode: str) -> None:
         self.radio_tun.set_checked(mode == "tun")
@@ -488,8 +538,9 @@ class MainWindow(QWidget):
 
     # ---- исключения (VPN.ps1:226-302) ------------------------------------
     def _save_excl(self) -> None:
-        """Save-ExclList (VPN.ps1:226-231)."""
+        """Save-ExclList (VPN.ps1:226-231) + режим списка (новое)."""
         self.state["appList"] = self.list_excl.item_texts()
+        self.state["appMode"] = self._app_mode()
         save_state(self.state)
 
     def _excl_add(self) -> None:
@@ -506,15 +557,25 @@ class MainWindow(QWidget):
             # WinForms Items.Contains - регистрозависим
             self._status(f"{v} уже есть в списке", theme.WARN)
             return
-        if v.casefold() in {a.casefold() for a in GAME_SAFE_PROCESSES}:
-            # PS `-contains` - регистронезависим
+        if (
+            self._app_mode() == APP_MODE_EXCLUDE
+            and v.casefold() in {a.casefold() for a in GAME_SAFE_PROCESSES}
+        ):
+            # PS `-contains` - регистронезависим. Проверка только для exclude:
+            # в include базовый список игр не участвует (игры и так идут
+            # напрямую), поэтому запрет «уже исключён» был бы враньём -
+            # пользователь вправе пустить Steam через VPN осознанно
             self._status(f"{v} и так исключён автоматически", theme.WARN)
             return
         self.list_excl.add_item(v)
         self.picker_proc.setText("")
         self._save_excl()
-        self._status(f"Добавлено исключение: {v}", theme.ACCENT2)
-        write_log(f"exclusion added by user: {v}")
+        if self._app_mode() == APP_MODE_INCLUDE:
+            self._status(f"Добавлено в список через VPN: {v}", theme.ACCENT2)
+            write_log(f"vpn-include added by user: {v}")
+        else:
+            self._status(f"Добавлено исключение: {v}", theme.ACCENT2)
+            write_log(f"exclusion added by user: {v}")
 
     def _excl_del(self, *_args) -> None:
         """btnExclDel (VPN.ps1:286-290); *_args - аргумент сигнала doubleClicked."""
@@ -530,7 +591,11 @@ class MainWindow(QWidget):
             return
         self.list_excl.clear_rows()
         self._save_excl()
-        self._status("Список исключений очищен", theme.WARN)
+        # тексты под режим: в include «исключений» в списке нет вовсе
+        if self._app_mode() == APP_MODE_INCLUDE:
+            self._status("Список процессов через VPN очищен", theme.WARN)
+        else:
+            self._status("Список исключений очищен", theme.WARN)
 
     # ---- подключение (VPN.ps1:458-575) -----------------------------------
     def _connect_click(self) -> None:
@@ -540,9 +605,24 @@ class MainWindow(QWidget):
         mode = self._mode()
         sel = self._selected_tags()
         apps = self._app_list()
+        app_mode = self._app_mode()
+
+        if app_mode == APP_MODE_INCLUDE and not apps:
+            # пустой список в include даёт route.final=direct: туннель
+            # поднимется, но не захватит НИЧЕГО - «VPN включён» и полный
+            # провал в ожидании. Лучше спросить до UAC, чем потом удивляться
+            if not self._msg_confirm(
+                "Список пуст: через VPN не пойдёт ни одно приложение, "
+                "весь трафик пойдёт напрямую.\n\nПродолжить подключение?",
+                "Только выбранные процессы",
+            ):
+                write_log("connect отменён: пустой список в режиме include")
+                self._status("Отменено: добавь процессы в список", theme.WARN)
+                return
 
         self.state["mode"] = mode
         self.state["appList"] = apps
+        self.state["appMode"] = app_mode
         self.state["subUrl"] = self.field_sub.text().strip()
         self.state["selected"] = ",".join(sel) if sel else ""
         save_state(self.state)
@@ -599,14 +679,17 @@ class MainWindow(QWidget):
         cfg = None  # путь записанного конфига - для purge в except (S2)
         proxy_on = False  # включили наш системный прокси? (снять при сбое)
         try:
-            cfg = new_sing_box_config(self.nodes, sel, mode, apps)
+            cfg = new_sing_box_config(
+                self.nodes, sel, mode, apps, app_mode=app_mode
+            )
             ok, err = test_sing_box_config(cfg)
             if not ok:
                 write_log(f"config check failed: {err}")
                 if sel:
                     write_log("retry with selected server only")
                     cfg = new_sing_box_config(
-                        self.nodes, sel, mode, apps, only_selected=True
+                        self.nodes, sel, mode, apps, only_selected=True,
+                        app_mode=app_mode,
                     )
                     ok, err = test_sing_box_config(cfg)
                 if not ok:
@@ -716,7 +799,8 @@ class MainWindow(QWidget):
         cfg = None  # для purge в except (S2)
         try:
             cfg = new_sing_box_config(
-                self.nodes, self._selected_tags(), mode, self._app_list()
+                self.nodes, self._selected_tags(), mode, self._app_list(),
+                app_mode=self._app_mode(),
             )
             ok, err = test_sing_box_config(cfg)
             purge_config_file(cfg)  # кредам нода на диске не место
