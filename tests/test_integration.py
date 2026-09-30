@@ -310,6 +310,39 @@ class TestAppModeSwitch:
         assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
 
 
+# ---- пикер: браузеры в списке всегда (30.09.2026, по просьбе) ---------------
+
+
+class TestPickerBrowsers:
+    """Edge в списке исключений: статические браузеры + поиск по подстроке.
+
+    Fill-ProcCombo (порт 1.0.6) кладёт в пикер только запущенные процессы,
+    а фильтр был префиксным: закрытый Edge не появлялся вовсе, а запущенный
+    (msedge.exe) не находился по слову «edge» - браузер в исключения было
+    не подобрать. Теперь в источнике всегда лежат PICKER_EXTRA_APPS, а
+    фильтр ищет по подстроке (picker.py::_filter_popup).
+    """
+
+    def test_msedge_always_in_source(self, qapp, win):
+        assert "msedge.exe" in win.picker_proc.item_source
+
+    def test_typing_edge_shows_msedge(self, qapp, win):
+        win.picker_proc.setText("edge")
+        win.picker_proc._filter_popup()
+        pop = win.picker_proc._pop
+        texts = [
+            pop.list.model().item(i).text() for i in range(pop.item_count())
+        ]
+        assert "msedge.exe" in texts
+
+    def test_browsers_merge_sorted_with_running(self, qapp, win):
+        # запущенные не теряются, дубликаты схлопнуты, порядок как в PS Sort
+        items = win.picker_proc.item_source
+        assert "chrome.exe" in items and "firefox.exe" in items
+        assert items == sorted(items, key=str.casefold)
+        assert len({i.casefold() for i in items}) == len(items)
+
+
 # ---- загрузка подписки (VPN.ps1:120-156) -----------------------------------
 
 

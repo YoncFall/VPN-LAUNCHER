@@ -98,6 +98,14 @@ _GRAY = QColor(128, 128, 128)
 _EXCL_EXE_END = re.compile(r"\.exe$", re.IGNORECASE)
 _EXCL_NAME = re.compile(r"^[\w\-. ]+\.exe$", re.IGNORECASE)
 
+# Пикер (по просьбе, 30.09.2026): эти имена всегда в списке, даже когда
+# процессы закрыты. Fill-ProcCombo (порт 1.0.6) кладёт только запущенное, а
+# браузер в исключения подбирают чаще всего именно «на всякий случай» —
+# Edge это msedge.exe, и закрытый он в списке вообще не появлялся.
+PICKER_EXTRA_APPS: tuple[str, ...] = (
+    "msedge.exe", "chrome.exe", "firefox.exe", "opera.exe", "brave.exe",
+)
+
 
 def _label(
     parent: QWidget,
@@ -324,7 +332,10 @@ class MainWindow(QWidget):
                 self.list_excl.add_item(str(a))
         # старый state.json без appMode читается как 'exclude' (поведение 1.0.6)
         self._apply_app_mode(str(self.state.get("appMode") or APP_MODE_EXCLUDE))
-        self.picker_proc.set_items(get_running_exe_list())  # Fill-ProcCombo
+        # Fill-ProcCombo: запущенные + PICKER_EXTRA_APPS (см. выше)
+        self.picker_proc.set_items(
+            sorted({*get_running_exe_list(), *PICKER_EXTRA_APPS}, key=str.casefold)
+        )
         self._status("Готов")
         title = "VPN ЛАУНЧЕР BY @YoncFALL"
         if is_elevated():

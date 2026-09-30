@@ -357,16 +357,22 @@ class GamePicker(QWidget):
         self._pop.setGeometry(gx, y, self.width(), h)
 
     def _filter_popup(self) -> None:
-        """Порт FilterPopup (theme.ps1:393-404): префикс, lowerInvariant.
+        """Фильтр выпадашки (порт FilterPopup, theme.ps1:393-404).
 
-        Отклонение (по просьбе): нулевые совпадения при живом наборе не
+        Отклонение от 1.0.6 (по просьбе, 30.09.2026): подстрока вместо
+        префикса (там lowerInvariant + StartsWith). Причина: Edge — это
+        msedge.exe, и по слову «edge» префиксный поиск всегда отдавал пусто —
+        браузер в списке исключений было не найти; поиск по подстроке
+        находит и «edge» → msedge.exe, и «team» → Teams.
+
+        Второе отклонение (там же): нулевые совпадения при живом наборе не
         закрывают список - показываем строку-заглушку (README).
         """
         t = self._edit.text().strip().lower()
         shown = [
             it
             for it in self.item_source
-            if it and (not t or it.lower().startswith(t))
+            if it and (not t or t in it.lower())
         ]
         if not shown:
             if not self.item_source:

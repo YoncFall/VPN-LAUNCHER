@@ -154,18 +154,33 @@ class TestGamePicker:
         assert p.drop_open()
         assert p._pop.item_count() == 2
 
-    def test_filter_prefix_case_insensitive(self, qapp):
+    def test_filter_substring_case_insensitive(self, qapp):
+        # подстрока вместо префикса 1.0.6 (StartsWith) - отклонение по
+        # просьбе: msedge.exe не находилось по слову «edge», см. picker.py
         p = GamePicker("ph")
         p.set_items(["Steam.exe", "Discord.exe", "notepad.exe"])
         p.open_drop()
-        p.setText("st")  # StartsWith, lowerInvariant (theme.ps1:393-404)
+        p.setText("st")  # подстрока, lowerInvariant
         assert p._pop.item_count() == 1
+        p.setText("ord")  # середина слова: Discord.exe
+        assert p._pop.item_count() == 1
+        assert p._pop.list.model().item(0).text() == "Discord.exe"
         p.setText("")  # пусто - все пункты
         assert p._pop.item_count() == 3
         p.setText("zzz")  # совпадений нет - заглушка, список не закрывается
         assert p.drop_open()
         assert p._pop.item_count() == 1
         assert p._pop.list.model().item(0).text() == "(нет совпадений)"
+
+    def test_filter_finds_edge_by_word(self, qapp):
+        # Edge живёт как msedge.exe: по слову «edge» префиксный фильтр
+        # (1.0.6) отдавал пусто - браузер в списке исключений не найти
+        p = GamePicker("ph")
+        p.set_items(["msedge.exe", "steam.exe"])
+        p.open_drop()
+        p.setText("edge")
+        assert p._pop.item_count() == 1
+        assert p._pop.list.model().item(0).text() == "msedge.exe"
 
     def test_commit_sets_text_and_closes(self, qapp):
         p = GamePicker("ph")
@@ -211,8 +226,11 @@ class TestGamePicker:
         # клавиши при открытом попапе уходят в него (активное окно)
         QTest.keyClicks(p._pop, "cs")
         assert p.text() == "cs"
-        assert p._pop.item_count() == 1  # остались только совпадения
-        assert p._pop.list.model().item(0).text() == "csrss.exe"
+        # подстрока вместо префикса (отклонение 30.09.2026, README): "cs" есть
+        # и в Ascon.CSC.exe, и в csrss.exe
+        assert p._pop.item_count() == 2  # остались только совпадения
+        assert p._pop.list.model().item(0).text() == "Ascon.CSC.exe"
+        assert p._pop.list.model().item(1).text() == "csrss.exe"
         assert p.drop_open()  # есть совпадения - список остаётся открытым
 
     def test_no_match_keeps_popup_with_placeholder(self, qapp, monkeypatch):
