@@ -13,11 +13,18 @@
     отличие видно только в display-именах с «сырой» кириллицей из UTF-8
     подписки (1.0.6 показывает mojibake, здесь - корректный текст).
   - сообщения исключений текстом совпадают с PS throw; тип - SubscriptionError.
+  - транспорт: 1.0.6 (WebClient) качал что угодно, включая http:// с токеном
+    подписки в открытом виде; здесь https обязателен для внешних адресов,
+    http допустим только в локальной сети (свой IP-литерал или имя,
+    резолвящееся в локальный адрес), а редирект на небезопасный адрес
+    отклоняется вместе с телом ответа.
 """
 from __future__ import annotations
 
+import ipaddress
 import locale
 import re
+import socket
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -44,6 +51,41 @@ _FILE_URL_RE = re.compile(r"^file://", re.IGNORECASE)
 
 class SubscriptionError(RuntimeError):
     """PS `throw` из Get-SubscriptionNodes / Parse-NodeList."""
+
+
+def _host_is_private(host: str) -> bool:
+    """True - хост ведёт на локальную сеть (http допустим только там)."""
+    try:
+        addrs = [ipaddress.ip_address(host)]
+    except ValueError:
+        # имя, а не адрес: резолвим - для одного fetch этого достаточно
+        try:
+            addrs = [
+                ipaddress.ip_address(info[4][0])
+                for info in socket.getaddrinfo(host, None)
+            ]
+        except (OSError, ValueError):
+            return False
+    return any(a.is_private or a.is_loopback or a.is_link_local for a in addrs)
+
+
+def _remote_url_allowed(url: str) -> bool:
+    """https - всегда; http - только локальная сеть; прочее - нет.
+
+    Отклонение от 1.0.6 (см. докстринг модуля): токен подписки не должен
+    ехать по сети в открытом виде.
+    """
+    try:
+        parts = urlsplit(url)
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+    except ValueError:
+        return False
+    if scheme == "https":
+        return True
+    if scheme != "http":
+        return False
+    return bool(host) and _host_is_private(host)
 
 
 def _decode_body(raw: bytes) -> str:
@@ -83,11 +125,24 @@ def fetch_nodes(url: str, *, logger: Callable[[str], None] = write_log) -> list[
         host = urlsplit(url).hostname or "?"
     except ValueError:
         host = "?"
+    if not _remote_url_allowed(url):
+        raise SubscriptionError(
+            "Подписка по http:// извне запрещена: токен пойдёт по сети "
+            "в открытом виде. Нужен https://; для локального зеркала - "
+            "путь к файлу либо адрес локальной сети."
+        )
     logger("fetching subscription from host: " + host)
 
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
         raw = resp.read()
+        final_url = resp.geturl() if hasattr(resp, "geturl") else None
+    if final_url and not _remote_url_allowed(final_url):
+        # сервер перевёл запрос (редирект) на http - тело не принимаем:
+        # по открытому каналу его мог подменить кто угодно
+        raise SubscriptionError(
+            "Сервер подписки перевёл запрос на небезопасный адрес: " + final_url
+        )
     if not raw:
         raise SubscriptionError("Пустой ответ сервера подписки")
     return parse_node_list(_decode_body(raw), logger=logger)

@@ -44,6 +44,8 @@ _k32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
 _k32.CreateMutexW.restype = wintypes.HANDLE
 _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
 _k32.CloseHandle.restype = wintypes.BOOL
+_k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+_k32.OpenProcess.restype = wintypes.HANDLE
 
 _u32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
 _u32.SetForegroundWindow.argtypes = (wintypes.HWND,)
@@ -92,6 +94,38 @@ def _clear_pid() -> None:
         _pid_file().unlink()
     except OSError:
         pass  # как Host.cs ClearPid: не мешаем выходу
+
+
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+
+
+def _pid_alive(pid: int) -> bool:
+    """True - процесс с этим pid существует (или проверить его нельзя)."""
+    handle = _k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if handle:
+        _k32.CloseHandle(handle)
+        return True
+    # доступ запрещён (повышенный/чужой пользователь) - консервативно
+    # считаем живым, чтобы не принять рабочую сессию за сироту
+    return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+
+
+def live_foreign_app_pid() -> int:
+    """PID живого чужого экземпляра приложения из app.pid (0 - нет).
+
+    Вызывается ДО acquire_instance (иначе _mark_pid перезаписал бы файл
+    нашим pid). Нужен main(): у повышенного экземпляра свой мьютекс, наш
+    acquire проходит - без этой проверки новый запуск принял бы работающую
+    TUN-сессию за сироту движка и убил бы её (см. proc.stop_orphan_engine).
+    """
+    try:
+        pid = int(_pid_file().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+    if pid <= 0 or pid == os.getpid():
+        return 0
+    return pid if _pid_alive(pid) else 0
 
 
 def acquire_instance() -> bool:

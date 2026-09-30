@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from vpn_launcher.paths import SOCKS_PORT, install_root
+from vpn_launcher.paths import SING_BOX, SOCKS_PORT, install_root
 from vpn_launcher.win import autostart, elevate, mutex, proc, proxy
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -359,3 +359,88 @@ class TestProc:
         small.write_bytes(b"abc")
         proc._rotate(small)
         assert small.exists()
+
+# ---------------- сирота движка после краша + живой экземпляр ----------------
+
+
+class TestOrphanEngine:
+    """Краш приложения не убивает движок: старый sing-box снимаем по нашему пути."""
+
+    def test_find_matches_only_our_path(self, monkeypatch):
+        monkeypatch.setattr(proc, "_pids_by_name", lambda name: [111, 222])
+        paths = {111: str(SING_BOX), 222: r"C:\other\sing-box.exe"}
+        monkeypatch.setattr(proc, "_image_path", lambda pid: paths.get(pid, ""))
+        # чужая копия (Happ и прочие - другой путь) не трогается
+        assert proc.find_orphan_engine() == [111]
+
+    def test_find_queries_by_engine_name(self, monkeypatch):
+        names: list[str] = []
+        monkeypatch.setattr(
+            proc, "_pids_by_name", lambda name: names.append(name) or []
+        )
+        proc.find_orphan_engine()
+        assert names == [SING_BOX.name]
+
+    def test_pids_by_name_real_unknown_is_empty(self):
+        # реальный Toolhelp-снапшот: несуществующего процесса нет
+        assert proc._pids_by_name("definitely-not-a-process-xyz.exe") == []
+
+    def test_image_path_of_alive_process(self):
+        # реальный вызов: путь текущего процесса получить можно
+        assert proc._image_path(os.getpid()).lower().endswith(".exe")
+
+    def test_stop_counts_and_denied(self, monkeypatch):
+        monkeypatch.setattr(proc, "find_orphan_engine", lambda: [111, 222])
+        killed: list[int] = []
+
+        def fake_terminate(pid):
+            if pid == 222:
+                raise OSError("access denied")  # повышенный/чужая сессия
+            killed.append(pid)
+
+        monkeypatch.setattr(proc, "_terminate", fake_terminate)
+        logs: list[str] = []
+        monkeypatch.setattr(proc, "write_log", logs.append)
+        assert proc.stop_orphan_engine() == 1
+        assert killed == [111]
+        assert any("снят pid 111" in line for line in logs)
+        assert any("pid 222 не снялся" in line for line in logs)
+
+    def test_stop_clean_is_zero(self, monkeypatch):
+        monkeypatch.setattr(proc, "find_orphan_engine", lambda: [])
+        assert proc.stop_orphan_engine() == 0
+
+
+class TestLiveForeignAppPid:
+    """Живую сессию (в т.ч. повышененную) нельзя принять за сироту."""
+
+    @pytest.fixture
+    def mpid_file(self, tmp_path, monkeypatch):
+        pf = tmp_path / "app.pid"
+        monkeypatch.setattr(mutex, "_pid_file", lambda: pf)
+        return pf
+
+    def test_no_file(self, mpid_file):
+        assert mutex.live_foreign_app_pid() == 0
+
+    def test_garbage(self, mpid_file):
+        mpid_file.write_text("не-число", encoding="utf-8")
+        assert mutex.live_foreign_app_pid() == 0
+
+    def test_own_pid_ignored(self, mpid_file):
+        mpid_file.write_text(str(os.getpid()), encoding="utf-8")
+        assert mutex.live_foreign_app_pid() == 0
+
+    def test_dead_pid(self, mpid_file, monkeypatch):
+        mpid_file.write_text("4242", encoding="utf-8")
+        monkeypatch.setattr(mutex, "_pid_alive", lambda pid: False)
+        assert mutex.live_foreign_app_pid() == 0
+
+    def test_live_foreign_pid(self, mpid_file, monkeypatch):
+        mpid_file.write_text("4242", encoding="utf-8")
+        monkeypatch.setattr(mutex, "_pid_alive", lambda pid: True)
+        assert mutex.live_foreign_app_pid() == 4242
+
+    def test_pid_alive_real(self):
+        assert mutex._pid_alive(os.getpid()) is True
+        assert mutex._pid_alive(0) is False

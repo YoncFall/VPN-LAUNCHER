@@ -61,8 +61,17 @@ from vpn_launcher.win.elevate import (
     signal_window_shown,
     wait_window_shown,
 )
-from vpn_launcher.win.mutex import acquire_instance, focus_existing_window
-from vpn_launcher.win.proc import get_running_exe_list, start_sing_box, stop_sing_box
+from vpn_launcher.win.mutex import (
+    acquire_instance,
+    focus_existing_window,
+    live_foreign_app_pid,
+)
+from vpn_launcher.win.proc import (
+    get_running_exe_list,
+    start_sing_box,
+    stop_orphan_engine,
+    stop_sing_box,
+)
 from vpn_launcher.win.proxy import (
     set_proxy_off,
     set_proxy_on,
@@ -930,14 +939,24 @@ def _window_pos_arg(args: list[str]) -> tuple[int, int] | None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
     autoconnect = "--autoconnect" in args
+    # живой чужой экземпляр (в т.ч. повышенный - у него свой мьютекс):
+    # его движок сиротой НЕ считаем; проверка до _mark_pid, иначе файл
+    # переписался бы нашим pid (см. mutex.live_foreign_app_pid)
+    other_app = live_foreign_app_pid()
     # single-instance (Host.cs): второй экземпляр поднимает окно первого
     if not acquire_instance():
         focus_existing_window()
         return 0
-    purge_config_file()  # сирота от прошлого запуска: движок давно не жив
+    purge_config_file()  # сирота КОНФИГА от прошлого запуска (S2)
     # S2-прокси: краш в прокси-режиме оставляет наш ProxyServer на мёртвом
     # порту - снимаем (только если это точный наш формат; чужие не трогаем)
     startup_proxy_cleanup()
+    if other_app:
+        write_log(
+            f"живой экземпляр приложения (pid {other_app}) - сироту движка не трогаем"
+        )
+    else:
+        stop_orphan_engine()  # старый sing-box после краша - снять (S3+)
     app = QApplication([args[0]] if args else [])
     app.setStyle("Fusion")
     app.setApplicationName("VPN LAUNCHER")

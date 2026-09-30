@@ -57,6 +57,20 @@ _KERNEL32.Process32FirstW.restype = wintypes.BOOL
 _KERNEL32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W))
 _KERNEL32.Process32NextW.restype = wintypes.BOOL
 _KERNEL32.CloseHandle.argtypes = (wintypes.HANDLE,)
+_KERNEL32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+_KERNEL32.OpenProcess.restype = wintypes.HANDLE
+_KERNEL32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+_KERNEL32.TerminateProcess.restype = wintypes.BOOL
+_KERNEL32.QueryFullProcessImageNameW.argtypes = (
+    wintypes.HANDLE,
+    wintypes.DWORD,
+    wintypes.LPWSTR,
+    ctypes.POINTER(wintypes.DWORD),
+)
+_KERNEL32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+_PROCESS_TERMINATE = 0x0001
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 def get_running_exe_list() -> list[str]:
@@ -175,3 +189,91 @@ def stop_sing_box(proc: subprocess.Popen | None) -> None:
             proc.kill()
     except OSError:
         pass  # как try/catch в PS
+
+
+# ---------------- сирота движка после краша ----------------
+
+
+def _pids_by_name(exe_name: str) -> list[int]:
+    """PID процессов с таким именем файла (Toolhelp32)."""
+    snap = _KERNEL32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap == INVALID_HANDLE_VALUE:
+        return []
+    wanted = exe_name.casefold()
+    out: list[int] = []
+    entry = _PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    try:
+        ok = _KERNEL32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            if entry.th32ProcessID and entry.szExeFile.casefold() == wanted:
+                out.append(entry.th32ProcessID)
+            ok = _KERNEL32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        _KERNEL32.CloseHandle(snap)
+    return out
+
+
+def _image_path(pid: int) -> str:
+    """Полный путь образа процесса; '' - нет доступа или процесс завершился."""
+    handle = _KERNEL32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buf))
+        if _KERNEL32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value
+        return ""
+    finally:
+        _KERNEL32.CloseHandle(handle)
+
+
+def find_orphan_engine() -> list[int]:
+    """PID нашего sing-box, оставшиеся после краша прошлого запуска.
+
+    Краш приложения движок не убивает: старый sing-box висит с занятыми
+    портами/TUN, конфига на диске уже нет (S2) - следующее подключение
+    падает с «address already in use», а состояние непрозрачно. Сверяем по
+    ПОЛНОМУ ПУТИ: чужие копии sing-box (Happ и прочие - другой путь) не
+    трогаем. Защита от убийства живой сессии - live_foreign_app_pid()
+    (вызывается из main() до захвата мьютекса).
+    """
+    target = str(SING_BOX).casefold()
+    return [
+        pid
+        for pid in _pids_by_name(SING_BOX.name)
+        if _image_path(pid).casefold() == target
+    ]
+
+
+def _terminate(pid: int) -> None:
+    """TerminateProcess (как Stop-Process -Force); OSError - нет прав."""
+    handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, pid)
+    if not handle:
+        raise OSError(f"OpenProcess err={ctypes.get_last_error()} (pid {pid})")
+    try:
+        if not _KERNEL32.TerminateProcess(handle, 1):
+            raise OSError(
+                f"TerminateProcess err={ctypes.get_last_error()} (pid {pid})"
+            )
+    finally:
+        _KERNEL32.CloseHandle(handle)
+
+
+def stop_orphan_engine() -> int:
+    """Снять сироты движка на старте (main()). Сколько процессов снято.
+
+    Повышенный/чужосессионный процесс может не поддаться без прав - тогда
+    пишем в лог: повышенный экземпляр снимет при своём старте.
+    """
+    stopped = 0
+    for pid in find_orphan_engine():
+        try:
+            _terminate(pid)
+        except OSError as exc:
+            write_log(f"orphan engine: pid {pid} не снялся ({exc})")
+            continue
+        stopped += 1
+        write_log(f"orphan engine: снят pid {pid} (сирота прошлого запуска)")
+    return stopped

@@ -26,11 +26,16 @@ def _plain() -> str:
 
 
 class _FakeResp:
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, final_url: str | None = None):
         self._data = data
+        self._final_url = final_url
 
     def read(self) -> bytes:
         return self._data
+
+    def geturl(self) -> str | None:
+        """Финальный URL после редиректов (как у urllib.request.HTTPResponse)."""
+        return self._final_url
 
     def __enter__(self):
         return self
@@ -103,6 +108,74 @@ class TestFetchLocal:
     def test_empty_url_raises(self):
         with pytest.raises(SubscriptionError, match="Пустая ссылка"):
             fetch_nodes("", logger=_NOLOG)
+
+
+class TestHttpOnly:
+    """Отклонение от 1.0.6: внешний http:// больше не качаем.
+
+    Токен подписки в query/path при http едет по сети в открытом виде;
+    http остаётся только для локальной сети и file-путей.
+    """
+
+    def _patch_dns(self, monkeypatch, ip: str) -> None:
+        monkeypatch.setattr(
+            subscription.socket,
+            "getaddrinfo",
+            lambda host, port=None: [(2, 1, 6, "", (ip, 0))],
+        )
+
+    def test_url_policy(self):
+        assert subscription._remote_url_allowed("https://any.host/x")
+        assert subscription._remote_url_allowed("http://127.0.0.1/x")
+        assert subscription._remote_url_allowed("http://10.0.0.1/x")
+        assert subscription._remote_url_allowed("http://[::1]/x")
+        assert not subscription._remote_url_allowed("http://any.host/x")
+        assert not subscription._remote_url_allowed("ftp://any.host/x")
+        assert not subscription._remote_url_allowed("")
+
+    def test_http_public_hostname_rejected(self, monkeypatch):
+        self._patch_dns(monkeypatch, "93.184.216.34")
+        with pytest.raises(SubscriptionError, match="открытом виде"):
+            fetch_nodes("http://sub.example/list", logger=_NOLOG)
+
+    def test_http_public_ip_literal_rejected(self):
+        # литерал IP - DNS вообще не нужен
+        with pytest.raises(SubscriptionError, match="открытом виде"):
+            fetch_nodes("http://93.184.216.34/list", logger=_NOLOG)
+
+    def test_http_private_literal_allowed(self, monkeypatch):
+        seen: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            return _FakeResp(_plain().encode("utf-8"))
+
+        monkeypatch.setattr(subscription.urllib.request, "urlopen", fake_urlopen)
+        nodes = fetch_nodes("http://10.1.2.3/list", logger=_NOLOG)
+        assert len(nodes) == 16
+        assert seen["url"] == "http://10.1.2.3/list"
+
+    def test_http_name_resolving_to_private_allowed(self, monkeypatch):
+        self._patch_dns(monkeypatch, "10.1.2.3")
+        monkeypatch.setattr(
+            subscription.urllib.request,
+            "urlopen",
+            lambda req, timeout=None: _FakeResp(_plain().encode("utf-8")),
+        )
+        assert len(fetch_nodes("http://nas.local/list", logger=_NOLOG)) == 16
+
+    def test_redirect_to_http_rejected_with_body_discarded(self, monkeypatch):
+        seen: dict = {}
+
+        def fake_urlopen(req, timeout=None):
+            seen["url"] = req.full_url
+            # сервер 302 на http - тело подделать уже могли, не принимаем
+            return _FakeResp(_plain().encode("utf-8"), final_url="http://evil.example/x")
+
+        monkeypatch.setattr(subscription.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(SubscriptionError, match="небезопасный адрес"):
+            fetch_nodes("https://sub.example/list", logger=_NOLOG)
+        assert seen["url"] == "https://sub.example/list"
 
 
 class TestFetchHttp:
