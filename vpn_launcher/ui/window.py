@@ -583,6 +583,7 @@ class MainWindow(QWidget):
         self.btn_connect.setEnabled(False)
         self._status("Генерация конфига...")  # цвет не меняем (как PS, 526)
         QApplication.processEvents()
+        cfg = None  # путь записанного конфига - для purge в except (S2)
         try:
             cfg = new_sing_box_config(self.nodes, sel, mode, apps)
             ok, err = test_sing_box_config(cfg)
@@ -632,6 +633,7 @@ class MainWindow(QWidget):
             self.tick.start()
         except Exception as ex:
             write_log(f"connect ERROR: {ex}")
+            purge_config_file(cfg)  # S2: сбой подключения не оставляет креды на диске
             self._sb_cfg = None
             self._sb_cfg_data = None
             remove_kill_switch()  # на случай, если фильтры успели повесить
@@ -644,6 +646,7 @@ class MainWindow(QWidget):
         remove_kill_switch()  # снять фильтры ДО остановки движка (без стоп-кадра)
         stop_sing_box(self.proc)
         self.proc = None
+        purge_config_file(self._sb_cfg)  # S2: сироту мог пересоздать автоперезапуск
         self._sb_cfg = None
         self._sb_cfg_data = None
         set_proxy_off()
@@ -661,6 +664,7 @@ class MainWindow(QWidget):
             self._msg("Сначала загрузи подписку.")
             return
         mode = self._mode()
+        cfg = None  # для purge в except (S2)
         try:
             cfg = new_sing_box_config(
                 self.nodes, self._selected_tags(), mode, self._app_list()
@@ -675,6 +679,7 @@ class MainWindow(QWidget):
             else:
                 self._msg(err, "Ошибка конфига", icon="error")
         except Exception as ex:
+            purge_config_file(cfg)  # S2: сбой (например, пиннинг) - без сироты
             self._msg(str(ex), "Ошибка", icon="error")
 
     # ---- таймер 10с (VPN.ps1:615-641) ------------------------------------
@@ -742,6 +747,7 @@ class MainWindow(QWidget):
             proc = start_sing_box(self._sb_cfg, install_root())
         except OSError as ex:
             write_log(f"sing-box restart ERROR: {ex}")
+            purge_config_file(self._sb_cfg)  # S2: сирота после сбоя перезапуска
             return False
         # падение на старте (FATAL в конфиге/адресе) видно меньше чем за 1с
         for _ in range(30):
@@ -753,10 +759,12 @@ class MainWindow(QWidget):
             write_log(f"sing-box restart failed (code {proc.returncode}), "
                       f"stderr tail: {_sb_err_tail()}")
             stop_sing_box(proc)
+            purge_config_file(self._sb_cfg)  # S2: неудачная попытка без сироты
             return False
         if self._sb_cfg is None:
             # на время перезапуска пользователь нажал «Отключить»
             stop_sing_box(proc)
+            purge_config_file()  # S2: путь забыт - чистим стандартный
             return False
         purge_config_file(self._sb_cfg)  # креды снова не на диске
         self.proc = proc

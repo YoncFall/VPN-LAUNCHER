@@ -523,9 +523,41 @@ class TestConnect:
         monkeypatch.setattr(
             "vpn_launcher.ui.window.remove_kill_switch", lambda: removed.append(1)
         )
+        stale = Path(win._sb_cfg)
+        stale.write_text("{}", encoding="utf-8")  # сирота после автоперезапуска
         win._disconnect_click()
         assert removed == [1]
+        assert not stale.exists(), "«Отключить» удаляет config.json-сироту"
         assert win._sb_cfg_data is None
+
+    def test_connect_failure_purges_config(self, qapp, win, monkeypatch, tmp_path):
+        """Сбой подключения не оставляет config.json с кредами (S2, 01.10.2026).
+
+        Было: файл уже записан, исключение (check не прошёл/движок умер)
+        уходило в except БЕЗ purge - сирота лежала до следующего запуска.
+        """
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: str(cfg_path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (False, "boom")
+        )
+        win.radio_tun.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "Не удалось подключиться" in win.lbl_status.text()
+        assert not cfg_path.exists(), "после сбоя креды не должны остаться на диске"
+        assert win._sb_cfg is None and win._sb_cfg_data is None
+        assert win._msgs and win._msgs[0][2] == "error"
 
     def test_restart_rewrites_config_from_memory(self, qapp, win, monkeypatch):
         """Автоперезапуск пересоздаёт config.json из памяти и снова удаляет."""
@@ -563,6 +595,60 @@ class TestConnect:
         win._sb_cfg = None
         win._sb_cfg_data = None
         win.proc = None
+
+    def test_failed_restart_purges_config(self, qapp, win, monkeypatch):
+        """Сбой автоперезапуска не оставляет config.json с кредами (S2).
+
+        Было: три ранних return False (OSError, падение на старте, «Отключить»
+        во время перезапуска) миновали purge - после каждой неудачной попытки
+        (до 3) файл лежал на диске.
+        """
+        purges: list = []
+        rewrites: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.write_config",
+            lambda data, path=None: rewrites.append(path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.purge_config_file",
+            lambda path=None: purges.append(path),
+        )
+        monkeypatch.setattr("vpn_launcher.ui.window.time.sleep", lambda _s: None)
+        monkeypatch.setattr("vpn_launcher.ui.window.write_log", lambda _m: None)
+
+        class DeadProc:
+            pid = 778
+            returncode = 1
+
+            def poll(self):
+                return 1
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: DeadProc()
+        )
+        win._sb_cfg = "c.json"
+        win._sb_cfg_data = {"inbounds": []}
+
+        # 1) движок упал на старте (FATAL в конфиге)
+        assert win._restart_sing_box() is False
+        assert rewrites == ["c.json"], "конфиг пересоздан перед запуском"
+        assert purges == ["c.json"], "неудачная попытка обязана удалить конфиг"
+
+        # 2) OSError на старте (движок/диск недоступны)
+        purges.clear()
+        rewrites.clear()
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box",
+            lambda cfg, root: (_ for _ in ()).throw(OSError("нет файла")),
+        )
+        assert win._restart_sing_box() is False
+        assert rewrites == ["c.json"]
+        assert purges == ["c.json"], "OSError-ветка тоже без сироты"
+        win._sb_cfg = None
+        win._sb_cfg_data = None
 
 
 # ---- таймер 10с (VPN.ps1:615-641) ------------------------------------------
