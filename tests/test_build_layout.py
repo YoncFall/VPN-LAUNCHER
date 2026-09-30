@@ -115,6 +115,50 @@ class TestSetupSideBySide:
         assert i_gate < i_kill
 
 
+class TestSetupUpdateOverElevated:
+    """Обновление поверх повышенного приложения (30.09.2026).
+
+    Приложение работает с повышенными правами (autoconnect/подключение),
+    а установщик обычный: HasExited повышенного процесса бросает исключение,
+    старый catch возвращал true -> Kill пропускался, файл оставался занятым,
+    обновление падало с "файл используется другим процессом" (лог
+    vpnlauncher_setup.log, попытки 0..40 и IOException в CopyTree).
+    Теперь: отказ чтения HasExited ведёт к попытке Kill (ошибка попадает в
+    лог), занятость определяется по самому файлу, а если приложение всё ещё
+    держит exe - установщик перезапускает себя с повышенными правами.
+    """
+
+    def test_hasexit_failure_leads_to_kill_attempt(self):
+        # раньше catch { return true } молча пропускал Kill для повышенного
+        cs = _read("installer/Setup.cs")
+        assert "try { return p.HasExited; } catch { return false; }" in cs
+
+    def test_busy_detected_by_file_lock_not_process_list(self):
+        # список процессов виден и для повышенного приложения, а вот
+        # HasExited - нет; файл же открыт загрузчиком без права записи
+        cs = _read("installer/Setup.cs")
+        assert "static bool TargetExeLocked()" in cs
+        assert "FileMode.Open, FileAccess.ReadWrite, FileShare.Read" in cs
+        assert "return TargetExeLocked();" in cs
+
+    def test_launcher_relaunches_itself_elevated_when_app_busy(self):
+        cs = _read("installer/Setup.cs")
+        assert "if (busy && !IsElevated())" in cs
+        assert "static bool IsElevated()" in cs
+        assert 'p.StartInfo.Verb = "runas";' in cs
+        # StopApp сообщает занятость; без этого решения о повышении не будет
+        assert "bool busy = StopApp();" in cs
+        assert "static bool StopApp()" in cs
+
+    def test_fresh_install_never_triggers_elevation(self):
+        # первая установка (своего exe в целевой папке нет) не должна
+        # дёргать UAC: IsAppRunning там сразу false, StopApp вернёт false
+        cs = _read("installer/Setup.cs")
+        assert "if (!ownExeInTarget) return false;" in cs
+        assert ("if (!IsAppRunning(ownExeInTarget) && "
+                "!IsUninstallerRunning(target, me)) return false;") in cs
+
+
 class TestBuildScripts:
     def test_scripts_are_ascii(self):
         # правило репо: .ps1 только ASCII (PowerShell 5.1 ломает чтение)

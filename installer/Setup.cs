@@ -2,6 +2,9 @@
 // Один файл setup.exe: внутри встроен zip с файлами программы
 // (PyInstaller onedir: VPNLauncher.exe + _internal + sing-box.exe).
 // Установка идёт в профиль пользователя, права администратора не нужны.
+// Исключение - обновление, когда работающая программа запущена повышенным:
+// тогда установщик один раз перезапускается с UAC (RelaunchElevated) иначе
+// её не остановить и не заменить свои файлы.
 // Запуск: setup.exe            - обычная установка с окном
 //        setup.exe /S         - тихая установка
 //        setup.exe /DIR="..."  - своя папка
@@ -35,7 +38,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "2.1.0";
+    const string Version = "2.1.1";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
@@ -509,7 +512,19 @@ static class Setup
 
         // программа может быть запущена: закрываем её до копирования файлов,
         // иначе Windows не даст заменить её собственный exe
-        StopApp();
+        bool busy = StopApp();
+
+        // Повышенная копия приложения с нашего уровня не гасится: CloseMainWindow
+        // глушится UIPI, HasExited/Kill падают с "Отказано в доступе"
+        // (диагностика 30.09.2026: обновление до 2.1.1 падало с "файл
+        // используется другим процессом", пока приложение работало
+        // повышенным). Перезапускаем установщик с повышенными правами;
+        // дочерняя копия установит сама, мы выходим с кодом 4.
+        if (busy && !IsElevated())
+        {
+            if (RelaunchElevated() == 0) return 4;
+            Log("повышение прав недоступно, продолжаю без него");
+        }
 
         prog(2, "Проверка предыдущей версии");
         string oldDir = RegisteredDir() ?? string.Empty;
@@ -1037,7 +1052,9 @@ static class Setup
 
     // ---------------------------------------------------------------- процессы
 
-    static void StopApp()
+    // Возвращает true, если наш exe в целевой папке всё ещё занят
+    // (нужно для решения о перезапуске с повышенными правами).
+    static bool StopApp()
     {
         // Раньше здесь читался p.MainModule.FileName, и на процессе с
         // повышенными правами Windows даёт "Отказано в доступе".
@@ -1110,10 +1127,11 @@ static class Setup
         // ждём, пока Windows реально отпустит exe, иначе копирование падает
         for (int i = 0; i < 30; i++)
         {
-            if (!IsAppRunning(ownExeInTarget) && !IsUninstallerRunning(target, me)) return;
+            if (!IsAppRunning(ownExeInTarget) && !IsUninstallerRunning(target, me)) return false;
             System.Threading.Thread.Sleep(200);
         }
         Log("предупреждение: программа всё ещё работает после остановки");
+        return IsAppRunning(ownExeInTarget);
     }
 
     static bool IsUninstallerRunning(string target, int me)
@@ -1138,25 +1156,88 @@ static class Setup
 
     static bool HasExited(Process p)
     {
-        try { return p.HasExited; } catch { return true; }
+        // Для повышенного процесса при обычных правах доступ к HasExited
+        // бросает исключение. Старый catch возвращал true: мы считали, что
+        // процесс вышел, пропускали Kill и падали дальше на "файл занят"
+        // (30.09.2026, обновление до 2.1.1). Теперь считаем процесс живым и
+        // пробуем Kill - реальная ошибка (или успех) попадёт в лог.
+        try { return p.HasExited; } catch { return false; }
+    }
+
+    // Наш exe в целевой папке занят: файл исполняемого образа открыт
+    // загрузчиком без права записи, поэтому открыть его на запись нельзя.
+    // Так виден и повышенный процесс, для которого HasExited/Kill с обычного
+    // уровня прав недоступны.
+    static bool TargetExeLocked()
+    {
+        try
+        {
+            string exe = Path.Combine(TargetDir, ExeName);
+            if (!File.Exists(exe)) return false;
+            using (FileStream s = new FileStream(exe, FileMode.Open, FileAccess.ReadWrite, FileShare.Read)) { }
+            return false;
+        }
+        catch (IOException) { return true; }
+        catch { return false; }
+    }
+
+    static bool IsElevated()
+    {
+        try
+        {
+            using (System.Security.Principal.WindowsIdentity id = System.Security.Principal.WindowsIdentity.GetCurrent())
+            {
+                return new System.Security.Principal.WindowsPrincipal(id).IsInRole(
+                    System.Security.Principal.WindowsBuiltInRole.Administrator);
+            }
+        }
+        catch { return false; }
+    }
+
+    // Перезапуск установщика с повышенными правами: те же ключи, тот же
+    // профиль пользователя (%LOCALAPPDATA% и HKCU у того же юзера не меняются)
+    static int RelaunchElevated()
+    {
+        try
+        {
+            string[] argv = Environment.GetCommandLineArgs();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i < argv.Length; i++)
+            {
+                if (i > 1) sb.Append(' ');
+                string a = argv[i];
+                if (a.IndexOf(' ') >= 0 || a.IndexOf('"') >= 0)
+                    sb.Append('"').Append(a.Replace("\"", "\\\"")).Append('"');
+                else sb.Append(a);
+            }
+            Process p = new Process();
+            p.StartInfo.FileName = SelfExe;
+            p.StartInfo.Arguments = sb.ToString();
+            p.StartInfo.UseShellExecute = true;
+            p.StartInfo.Verb = "runas";
+            p.StartInfo.WorkingDirectory = SelfDir;
+            Log("перезапуск с повышенными правами: " + SelfExe + " " + sb.ToString());
+            p.Start();
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log("не удалось запустить с повышенными правами: " + ex.Message);
+            return -1;
+        }
     }
 
     // Свои файлы мог занять только лаунчер из целевой папки, поэтому на
     // первой установке (чужие копии мы не останавливали) ждать нечего:
     // иначе установка провисала бы на 6 секунд и писала ложное
     // "программа всё ещё работает после остановки".
+    // Проверяем занятость самого файла, а не список процессов: имя процесса
+    // повышенного приложения видно, но HasExited ему недоступен, и старая
+    // проверка врала "не работает" (30.09.2026, обновление до 2.1.1).
     static bool IsAppRunning(bool ownExeInTarget)
     {
         if (!ownExeInTarget) return false;
-        try
-        {
-            foreach (Process p in Process.GetProcessesByName("VPNLauncher"))
-            {
-                try { if (!p.HasExited) return true; } catch { }
-            }
-            return false;
-        }
-        catch { return false; }
+        return TargetExeLocked();
     }
 
     static void StartApp()
