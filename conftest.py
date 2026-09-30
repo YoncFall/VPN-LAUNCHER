@@ -44,6 +44,16 @@ def _tun_address_probe(monkeypatch):
     monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _wfp_session_clean():
+    """Kill switch: сессия WFP в тестах всегда закрыта (нет утечки между тестами)."""
+    from vpn_launcher.win import wfp
+
+    wfp._ENGINE = None
+    yield
+    wfp._ENGINE = None
+
+
 @pytest.fixture
 def sing_box_exe() -> Path:
     """Путь к sing-box.exe; пропускает тест, если движок не найден."""

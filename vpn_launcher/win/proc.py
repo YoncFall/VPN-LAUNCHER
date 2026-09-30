@@ -19,11 +19,13 @@ start_sing_box/stop_sing_box - порт запуска движка (VPN.ps1:541
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import subprocess
 import sys
 from ctypes import wintypes
 from pathlib import Path
 
+from vpn_launcher.core.log import write_log
 from vpn_launcher.paths import SING_BOX, install_root
 
 TH32CS_SNAPPROCESS = 0x00000002
@@ -88,6 +90,43 @@ def get_running_exe_list() -> list[str]:
 
 _LOG_MAX = 2 * 1024 * 1024  # PS: если singbox.log > 2MB - удалить (VPN.ps1:547)
 
+# Безопасность (01.10.2026): SHA256 поставляемого движка. Подмена
+# sing-box.exe (логин/пароли нод и весь трафик в его руках) должна быть
+# замечена, а не выполнена. При обновлении движка константу меняют
+# сознательно - тест test_engine_hash_pinned не даст забыть.
+ENGINE_SHA256 = "7BBEF1DEA9189EE12799AE834EA4B4658355DA25C47A21AD8804904C0CCD9410"
+
+
+def engine_hash(path: Path | str | None = None) -> str:
+    """SHA256 файла движка (верхний регистр hex)."""
+    p = Path(path) if path is not None else SING_BOX
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest().upper()
+
+
+def verify_engine(path: Path | str | None = None) -> None:
+    """Целостность движка перед запуском: подменённый/битый = стоп.
+
+    FileNotFoundError - файла нет (как FileNotFoundError у Start-Process в PS),
+    OSError - хэш не совпал (строка 'engine hash MISMATCH' пишется в лог).
+    """
+    p = Path(path) if path is not None else SING_BOX
+    try:
+        got = engine_hash(p)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"sing-box.exe не найден: {p}") from None
+    except OSError as ex:
+        raise OSError(f"sing-box.exe не читается: {p} ({ex})") from None
+    if got != ENGINE_SHA256:
+        write_log(
+            f"engine hash MISMATCH: ожидалось {ENGINE_SHA256[:12]}..., "
+            f"получено {got[:12]}..."
+        )
+        raise OSError("sing-box.exe повреждён или подменён (проверка целостности)")
+
 
 def _rotate(path: Path) -> None:
     try:
@@ -105,8 +144,10 @@ def start_sing_box(
     stdout -> <root>/singbox.log, stderr -> <root>/singbox.log.err (файлы
     обрезаются при старте, как -RedirectStandardOutput у Start-Process), cwd =
     корень установки, окно не создаётся. FileNotFoundError, если движок не
-    найден (Start-Process в PS тоже бросает).
+    найден (Start-Process в PS тоже бросает). Перед запуском - контроль
+    целостности (verify_engine): подменённый движок не выполняется.
     """
+    verify_engine()
     base = Path(root) if root is not None else install_root()
     out = base / "singbox.log"
     err = base / "singbox.log.err"

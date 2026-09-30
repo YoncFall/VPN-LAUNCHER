@@ -19,11 +19,13 @@ Install-GameCorners), шапка с неоновым логотипом, гра�
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QRegion
@@ -33,7 +35,9 @@ from vpn_launcher import __version__
 from vpn_launcher.core.config import (
     GAME_SAFE_PROCESSES,
     new_sing_box_config,
+    purge_config_file,
     test_sing_box_config,
+    write_config,
 )
 from vpn_launcher.core.log import write_log
 from vpn_launcher.core.state import load_state, save_state
@@ -60,6 +64,7 @@ from vpn_launcher.win.elevate import (
 from vpn_launcher.win.mutex import acquire_instance, focus_existing_window
 from vpn_launcher.win.proc import get_running_exe_list, start_sing_box, stop_sing_box
 from vpn_launcher.win.proxy import set_proxy_on, set_proxy_off
+from vpn_launcher.win.wfp import install_kill_switch, remove_kill_switch
 from vpn_launcher.workers import EgressWorker, PingWorker, SubscriptionWorker
 
 WIN_W, WIN_H = 620, 726
@@ -128,6 +133,7 @@ class MainWindow(QWidget):
         # автоперезапуск движка: путь конфига последнего успешного
         # подключения + счётчик попыток (см. _on_tick)
         self._sb_cfg: str | None = None
+        self._sb_cfg_data: dict | None = None  # конфиг в памяти (с диска удалён)
         self._sb_restarts = 0
 
         self._apply_mask()
@@ -603,6 +609,14 @@ class MainWindow(QWidget):
             # движок жив - запоминаем конфиг для автоперезапуска в _on_tick
             self._sb_cfg = str(cfg)
             self._sb_restarts = 0
+            # Безопасность (01.10.2026): конфиг держим в памяти и удаляем
+            # с диска - креды нод не лежат на диске, пока подключены; в TUN
+            # вешаем kill switch (внешний трафик только через туннель,
+            # иначе «нет интернета» вместо утечки - см. win/wfp.py)
+            self._sb_cfg_data = _read_cfg_data(cfg)
+            purge_config_file(cfg)
+            if mode == "tun":
+                install_kill_switch(_tun_addresses(self._sb_cfg_data))
             if mode == "proxy":
                 set_proxy_on()
             self.btn_disconnect.setEnabled(True)
@@ -619,15 +633,19 @@ class MainWindow(QWidget):
         except Exception as ex:
             write_log(f"connect ERROR: {ex}")
             self._sb_cfg = None
+            self._sb_cfg_data = None
+            remove_kill_switch()  # на случай, если фильтры успели повесить
             self._status("Не удалось подключиться", theme.DANGER)
             self.btn_connect.setEnabled(True)
             self._msg(str(ex), "Ошибка подключения", icon="error")
 
     def _disconnect_click(self) -> None:
         """btnDisconnect.Add_Click (VPN.ps1:577-589)."""
+        remove_kill_switch()  # снять фильтры ДО остановки движка (без стоп-кадра)
         stop_sing_box(self.proc)
         self.proc = None
         self._sb_cfg = None
+        self._sb_cfg_data = None
         set_proxy_off()
         self.tick.stop()
         self.btn_connect.setEnabled(True)
@@ -648,6 +666,7 @@ class MainWindow(QWidget):
                 self.nodes, self._selected_tags(), mode, self._app_list()
             )
             ok, err = test_sing_box_config(cfg)
+            purge_config_file(cfg)  # кредам нода на диске не место
             if ok:
                 self._status("Конфиг корректен", theme.ACCENT2)
                 self._msg(
@@ -676,12 +695,20 @@ class MainWindow(QWidget):
             set_proxy_off()
             self.proc = None
             self._sb_cfg = None
+            self._sb_cfg_data = None
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
             self._status(
                 "Соединение оборвалось - sing-box завершился, смотри лог",
                 theme.DANGER,
             )
+            if self.state.get("mode") == "tun":
+                # kill switch намеренно НЕ снимаем (fail-closed): туннель
+                # мёртв - трафик блокирован, вместо утечки «в обход VPN»
+                write_log(
+                    "kill switch остаётся активным: внешний трафик блокирован "
+                    "до «Отключить» или закрытия окна"
+                )
             self.led_status.light_off()  # обрыв - лампочки гаснут плавно
             self.titlebar.led.light_off()
             return
@@ -708,6 +735,10 @@ class MainWindow(QWidget):
         self._status(f"sing-box завершился - перезапуск {attempt}/3...", theme.WARN)
         QApplication.processEvents()
         try:
+            if self._sb_cfg_data is not None:
+                # config.json удалялся после старта (креды не живут на диске) -
+                # пересоздаём из памяти, движок прочитает его при запуске
+                write_config(self._sb_cfg_data, self._sb_cfg)
             proc = start_sing_box(self._sb_cfg, install_root())
         except OSError as ex:
             write_log(f"sing-box restart ERROR: {ex}")
@@ -727,6 +758,7 @@ class MainWindow(QWidget):
             # на время перезапуска пользователь нажал «Отключить»
             stop_sing_box(proc)
             return False
+        purge_config_file(self._sb_cfg)  # креды снова не на диске
         self.proc = proc
         write_log(f"sing-box restarted ok (attempt {attempt})")
         self._status(f"Соединение восстановлено (перезапуск {attempt}/3)", theme.ACCENT2)
@@ -782,6 +814,7 @@ class MainWindow(QWidget):
             if w is not None and not w.wait(2000):
                 w.terminate()  # порт BeginStop - принудительная остановка
                 w.wait(500)
+        remove_kill_switch()  # фильтры сняты и так (сессия WFP), но явно
         stop_sing_box(self.proc)
         self.proc = None
         set_proxy_off()
@@ -816,6 +849,30 @@ def _sb_err_tail(lines: int = 5) -> str:
     return " | ".join(text[-lines:]) if text else "(пусто)"
 
 
+def _read_cfg_data(cfg) -> dict | None:
+    """Содержимое config.json в память (для пересоздания при автоперезапуске).
+
+    Безопасность (01.10.2026): сам файл сразу удаляется, креды живут только
+    в процессе. None - файла нет или он битый (в тестах запись замокана).
+    """
+    try:
+        data = json.loads(Path(str(cfg)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _tun_addresses(data: dict | None) -> list[str]:
+    """Адреса TUN-инбаунда из конфига; [] - данных нет (kill switch не вешаем)."""
+    if not isinstance(data, dict):
+        return []
+    try:
+        addrs = data["inbounds"][0]["address"]
+    except (KeyError, IndexError, TypeError):
+        return []
+    return [a for a in addrs if isinstance(a, str)]
+
+
 def _window_pos_arg(args: list[str]) -> tuple[int, int] | None:
     """--window-pos=X,Y (граница передачи окна при TUN-повышении прав).
 
@@ -838,6 +895,7 @@ def main(argv: list[str] | None = None) -> int:
     if not acquire_instance():
         focus_existing_window()
         return 0
+    purge_config_file()  # сирота от прошлого запуска: движок давно не жив
     app = QApplication([args[0]] if args else [])
     app.setStyle("Fusion")
     app.setApplicationName("VPN LAUNCHER")

@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -458,6 +459,110 @@ class TestConnect:
         assert not win.titlebar.led._pulse, "верхняя горит ровно"
         assert win.btn_disconnect.isEnabled()
         assert win.tick.isActive()
+
+    def test_connect_purges_config_and_installs_kill_switch(
+        self, qapp, win, monkeypatch, tmp_path
+    ):
+        """Безопасность 01.10.2026: config.json удаляется сразу после старта
+        движка (креды нод не живут на диске), kill switch вешается с адресами
+        TUN из этого конфига, «Отключить» снимает фильтры.
+        """
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "inbounds": [
+                        {"type": "tun", "address": ["172.19.0.1/30", "fdfe::1/64"]}
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        ks_calls: list = []
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: str(cfg_path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.install_kill_switch", ks_calls.append
+        )
+        win.radio_tun.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
+        assert not cfg_path.exists(), "config.json обязан быть удалён после старта"
+        assert win._sb_cfg_data is not None, "конфиг должен жить в памяти"
+        assert ks_calls == [["172.19.0.1/30", "fdfe::1/64"]], (
+            "kill switch получает адреса TUN из конфига"
+        )
+
+        # «Отключить» снимает kill switch и чистит памятный конфиг
+        removed: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.remove_kill_switch", lambda: removed.append(1)
+        )
+        win._disconnect_click()
+        assert removed == [1]
+        assert win._sb_cfg_data is None
+
+    def test_restart_rewrites_config_from_memory(self, qapp, win, monkeypatch):
+        """Автоперезапуск пересоздаёт config.json из памяти и снова удаляет."""
+
+        class AliveProc:
+            pid = 777
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        rewrites: list = []
+        purges: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: AliveProc()
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.write_config",
+            lambda data, path=None: rewrites.append((data, path)),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.purge_config_file",
+            lambda path=None: purges.append(path),
+        )
+        win._sb_cfg = "c.json"
+        win._sb_cfg_data = {"inbounds": [{"type": "tun", "address": ["172.19.0.1/30"]}]}
+
+        assert win._restart_sing_box() is True
+        assert rewrites == [
+            (win._sb_cfg_data, "c.json")
+        ], "конфиг восстановлен из памяти, а не с диска"
+        assert purges == ["c.json"], "после успешного рестарта файл снова удалён"
+        win._sb_cfg = None
+        win._sb_cfg_data = None
+        win.proc = None
 
 
 # ---- таймер 10с (VPN.ps1:615-641) ------------------------------------------

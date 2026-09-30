@@ -36,6 +36,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -241,6 +242,30 @@ def write_config(cfg: dict[str, Any], path: Path | str | None = None) -> Path:
     return p
 
 
+def purge_config_file(path: Path | str | None = None, *, retries: int = 20, delay: float = 0.05) -> bool:
+    """Удалить config.json: креды нод не живут на диске дольше нужного.
+
+    Безопасность (01.10.2026): файл пишется перед запуском движка и сразу
+    удаляется (движок читает его на старте и закрывает); на автоперезапуске
+    файл пересоздаётся из памяти. Пока Windows держит файл (движок читает),
+    unlink отдаёт PermissionError - повторяем. Идемпотентно: файла нет ->
+    True. False - не удалось удалить (оставляем, пишем в лог).
+    """
+    p = Path(path) if path is not None else CONFIG_FILE
+    for _ in range(retries):
+        try:
+            if not p.exists():
+                return True
+            p.unlink()
+            return True
+        except PermissionError:
+            time.sleep(delay)
+        except OSError:
+            break
+    write_log("config.json: не удалось удалить (файл занят)")
+    return False
+
+
 def new_sing_box_config(
     nodes: Sequence[dict],
     selected: Sequence[str] = (),
@@ -274,9 +299,18 @@ def test_sing_box_config(
 ) -> tuple[bool, str]:
     """Test-SingBoxConfig: `sing-box check -c <path>` -> (ok, stderr-текст).
 
-    FileNotFoundError, если движок не найден (как Start-Process в PS).
+    FileNotFoundError, если движок не найден (как Start-Process в PS);
+    OSError - контроль целостности не прошёл (движок подменён/битый).
     """
     exe = Path(sing_box) if sing_box is not None else Path(SING_BOX)
+    if sing_box is None:
+        # Безопасность (01.10.2026): проверка ПЕРЕД exec - `check` тоже
+        # запускает бинарник, подменённый движок не должен выполниться.
+        # Сверяем только «свой» движок (путь по умолчанию); явный
+        # sing_box= - тестовые прогоны с другим бинарём.
+        from vpn_launcher.win.proc import verify_engine  # локальный: без цикла импортов
+
+        verify_engine(exe)
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW, как -NoNewWindow

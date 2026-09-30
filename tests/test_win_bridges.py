@@ -277,6 +277,8 @@ class TestProc:
 
         monkeypatch.setattr(proc.subprocess, "Popen", FakePopen)
         monkeypatch.setattr(proc, "SING_BOX", r"C:\eng\sing-box.exe")
+        # контроль целостности тут не главный герой (он в tests/test_security)
+        monkeypatch.setattr(proc, "verify_engine", lambda *a, **k: None)
         p = proc.start_sing_box("config.json", tmp_path)
         assert calls["args"] == [
             r"C:\eng\sing-box.exe", "run", "-c", "config.json", "-D", str(tmp_path),
