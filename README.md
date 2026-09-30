@@ -57,7 +57,7 @@
 
 ```powershell
 .\run.ps1                                   # окно приложения
-venv\Scripts\python.exe -m pytest           # тесты (312)
+venv\Scripts\python.exe -m pytest           # тесты (313)
 
 # переснять golden-эталон с текущей PS-версии (после правок core.ps1);
 # -SingBox необязателен: без него пропускается только прогон `sing-box check`
@@ -73,6 +73,8 @@ $env:VPN_SHOT = "C:\Temp\shot.png"; venv\Scripts\python.exe app.py
 # сборка релиза (этап 6): onedir + portable zip + одиночный установщик
 powershell -ExecutionPolicy Bypass -File .\build-app.ps1         # dist\VPNLauncher + zip
 powershell -ExecutionPolicy Bypass -File .\build-installer.ps1   # dist\...-Setup.exe
+# чек-суммы для описания релиза (exe не подписаны - сверка скачанного):
+powershell -ExecutionPolicy Bypass -File .\tools\make-checksums.ps1   # dist\SHA256SUMS.txt
 ```
 
 Для пользователя: скачать один `...Setup.exe`, запустить (SmartScreen:
@@ -131,6 +133,7 @@ tests/                 pytest
 tools/
   make_fixtures.py     генератор фикстур     [ГОТОВО]
   make_golden.ps1      снимок golden с core.ps1 [ГОТОВО]
+  make-checksums.ps1   SHA-256 дистрибутивов [ГОТОВО]
 ```
 
 ## Безопасность (пакет S1–S6, 01.10.2026)
@@ -226,6 +229,20 @@ Windows-мосты (на VPN не влияют):
 - `acquire_instance()` идемпотентен в рамках одного процесса (Host.cs
   одноразовый, такой case там не возникает).
 
+Подключение (01.10.2026, «фулл-защита»):
+
+- **`except` подключения гасит уже запущенный движок**: в 1.0.6
+  (VPN.ps1:568-574) сбой после старта sing-box оставлял его работать до
+  следующего запуска — чужой TUN/порты и «address already in use» у нового
+  подключения, непрозрачное состояние. Порядок в `except` прежний (purge
+  конфига → снять kill switch → снять прокси), затем остановка движка —
+  как в «Отключить» (фильтры снимаются до остановки);
+- **подписка только по `https://`** (см. «Безопасность», S1): 1.0.6 (WebClient)
+  качал и `http://` — токен утекал по сети в открытом виде. Здесь внешний
+  `http://` отклоняется, `http` остаётся для локальной сети и file-путей;
+  редирект на `http` не принимается вместе с телом ответа (по открытому
+  каналу его мог подменить кто угодно).
+
 Установка (этап 6, порт `installer/Setup.cs` из 1.0.6):
 
 - рекурсивное копирование (`CopyTree`) — раскладка onedir (дерево
@@ -237,6 +254,9 @@ Windows-мосты (на VPN не влияют):
   `VPN.ps1`);
 - `StopApp` дополнительно гасит `sing-box`, лежащий в целевой папке (чужие
   копии не трогает);
+- распаковка payload: наравне с `..` отбрасываются и **абсолютные имена
+  записей** (zip-slip: `Path.Combine` с rooted-путём вернул бы его как есть
+  и файл ушёл бы за папку установки);
 - запасной `vpnlauncher_setup.log` рядом с setup.exe пишется **только когда
   `%TEMP%` недоступен** — в 1.0.6 он писался всегда и оставлял файл там, откуда
   запустили установщик (основной лог всегда в `%TEMP%`);

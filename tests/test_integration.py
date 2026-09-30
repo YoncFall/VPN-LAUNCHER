@@ -614,6 +614,68 @@ class TestConnect:
         assert "Не удалось подключиться" in win.lbl_status.text()
         assert off == [1], "наш системный прокси обязан сниматься при сбое"
 
+    def test_connect_failure_after_start_stops_engine(
+        self, qapp, win, monkeypatch, tmp_path
+    ):
+        """Сбой подключения не оставляет уже запущенный движок.
+
+        Отклонение от 1.0.6 (VPN.ps1:568-574 там молчит), снято по явному
+        решению «фулл-защита» (01.10.2026): раньше except гасил прокси,
+        фильтры и конфиг, но sing-box работал до следующего старта - чужой
+        TUN/порты и «address already in use» у нового подключения.
+        """
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        off: list = []
+        stops: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.set_proxy_off", lambda: off.append(1)
+        )
+        monkeypatch.setattr("vpn_launcher.ui.window.set_proxy_on", lambda: None)
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: str(cfg_path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.stop_sing_box", lambda p: stops.append(p)
+        )
+
+        def boom(*_a, **_k):
+            raise RuntimeError("led broken")
+
+        # исключение ПОСЛЕ старта движка и включения прокси (падает свет)
+        monkeypatch.setattr(win.led_status, "light_up", boom)
+        win.radio_tun.set_checked(False)  # _mode() смотрит только на radio_tun
+        win.radio_proxy.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "Не удалось подключиться" in win.lbl_status.text()
+        assert len(stops) == 1 and win.proc is None, "движок обязан остановиться"
+        assert off == [1], "прокси при этом снимается как раньше"
+        assert not cfg_path.exists(), "конфиг не остаётся"
+
     @staticmethod
     def _ks_decline_mocks(monkeypatch, tmp_path):
         """Общая обвязка: TUN-подключение, kill switch не установился."""

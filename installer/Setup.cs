@@ -649,7 +649,10 @@ static class Setup
             foreach (ZipArchiveEntry e in zip.Entries)
             {
                 string name = e.FullName.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+                // zip-slip: '..' уводит выше папки установки, а rooted-имя
+                // (C:\...) Path.Combine вернёт как есть - такое имя тоже мимо
                 if (name.Contains("..")) continue;
+                if (Path.IsPathRooted(name)) continue;
                 string outPath = Path.Combine(dest, name);
                 if (name.EndsWith(Path.DirectorySeparatorChar.ToString()) || e.Name.Length == 0)
                 {

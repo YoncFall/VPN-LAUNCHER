@@ -677,6 +677,15 @@ class MainWindow(QWidget):
             remove_kill_switch()  # на случай, если фильтры успели повесить
             if proxy_on:
                 set_proxy_off()  # S2-прокси: сбой не оставляет наш прокси в HKCU
+            if self.proc is not None:
+                # Отклонение от 1.0.6 (VPN.ps1:568-574 там молчит; снято по
+                # явному решению «фулл-защита», 01.10.2026): сбой не оставляет
+                # уже запущенный движок - иначе до следующего старта висит
+                # чужой TUN/порты («address already in use» у нового
+                # подключения, непрозрачное состояние). Порядок как в
+                # «Отключить»: фильтры/прокси сняты, теперь гасим движок.
+                stop_sing_box(self.proc)
+                self.proc = None
             self._status("Не удалось подключиться", theme.DANGER)
             self.btn_connect.setEnabled(True)
             self._msg(str(ex), "Ошибка подключения", icon="error")
