@@ -98,15 +98,33 @@ class TestModesAndRules:
         tun = c["inbounds"][0]
         # strict_route=false и route_address - сознательные отклонения от
         # 1.0.6 (WFP резал DNS, default чужого VPN перехватывал трафик);
+        # адреса и роуты - строго IPv4 (см. регрессионный тест ниже);
         # аргументы - в комментарии у tun-инбаунда в core/config.py
         assert tun == {
             "type": "tun", "tag": "tun-in", "interface_name": "vpn-launcher-tun",
-            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"], "mtu": 1500,
+            "address": ["172.19.0.1/30"], "mtu": 1500,
             "auto_route": True, "strict_route": False,
-            "route_address": ["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"],
+            "route_address": ["0.0.0.0/1", "128.0.0.0/1"],
             "stack": "mixed",
         }
         assert len(c["inbounds"]) == 1
+
+    def test_tun_is_ipv4_only_no_v6_capture(self):
+        # Регрессия «5-секундный клин» (30.09.2026, эта машина): v6-адрес на
+        # TUN -> auto_route вешает ::/0 (metric 0) -> весь IPv6 идёт в туннель,
+        # а наружу ему нечем (машина без глобального IPv6). Стек TUN принимает
+        # TCP мгновенно, приложение отказа не видит, happy-eyebells не
+        # переключается на IPv4 -> обрыв ровно через 5.0s (тот же таймаут в
+        # singbox.log: "dial tcp [2a00:...]: i/o timeout"). Било по режиму
+        # include (final=direct): не выбранные процессы падали на любом домене
+        # с AAAA. Kill switch берёт адреса из этого же inbound (ui/window.py),
+        # поэтому KS получает только v4 и блокирует уходящий напрямую IPv6.
+        c = build_sing_box_config(_nodes(), mode="tun", app_mode="include")
+        tun = c["inbounds"][0]
+        assert all(":" not in a for a in tun["address"]), tun["address"]
+        assert all(":" not in r for r in tun["route_address"]), tun["route_address"]
+        # адрес вообще должен остаться (без адреса туннель не поднимется)
+        assert tun["address"] and tun["address"][0].endswith("/30")
 
     def test_proxy_has_no_tun_route_address(self):
         c = build_sing_box_config(_nodes(), mode="proxy")
@@ -279,7 +297,7 @@ class TestWriteAndNew:
         monkeypatch.setattr(cfg, "write_log", lines.append)
         cfg.new_sing_box_config(_nodes(), mode="tun", path=tmp_path / "c.json")
         assert len(lines) == 3  # direct-exclude + адрес + итог
-        assert lines[1] == "tun address: 172.19.0.1/30, fdfe:dcba:9876::1/126"
+        assert lines[1] == "tun address: 172.19.0.1/30"
         assert lines[-1] == "config written: 5 outbounds, mode=tun, final=proxy-group"
 
 
@@ -293,7 +311,7 @@ class TestWriteAndNew:
             app_mode=APP_MODE_INCLUDE, path=tmp_path / "c.json",
         )
         assert lines[0] == "  vpn-include apps: mygame.exe"
-        assert lines[1] == "tun address: 172.19.0.1/30, fdfe:dcba:9876::1/126"
+        assert lines[1] == "tun address: 172.19.0.1/30"
         assert lines[-1] == (
             "config written: 5 outbounds, mode=tun, final=direct, apps=include"
         )

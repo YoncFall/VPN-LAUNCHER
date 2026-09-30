@@ -50,9 +50,12 @@ def _ps_parity_view(built: dict) -> dict:
     Golden сняты PowerShell-версией; с 30.09.2026 Python-версия намеренно
     уходит от неё в tun-инбаунде (сознательные отклонения, см. core/config.py
     и README): strict_route=true убивал DNS на время туннеля (WFP режет
-    порт 53 вне туннеля), а авто-default 0.0.0.0/0 проигрывал по метрике
-    default чужого VPN (Happ). Для сравнения с эталоном поля приводятся к
-    PS-виду; фактические значения проверяет tests/test_config.py.
+    порт 53 вне туннеля), авто-default 0.0.0.0/0 проигрывал по метрике
+    default чужого VPN (Happ), а с 02.10.2026 TUN становится строго IPv4:
+    v6-адрес поднимал ::/0 через туннель и «5-секундный клин» (машина без
+    глобального IPv6, happy-eyebells не видит отказ, см.
+    test_tun_is_ipv4_only_no_v6_capture). Для сравнения с эталоном поля
+    приводятся к PS-виду; фактические значения проверяет tests/test_config.py.
     """
     import copy
 
@@ -61,6 +64,10 @@ def _ps_parity_view(built: dict) -> dict:
         if inbound.get("type") == "tun":
             inbound["strict_route"] = True
             inbound.pop("route_address", None)
+            addr = list(inbound.get("address", []))
+            if not any(":" in a for a in addr):
+                addr.append("fdfe:dcba:9876::1/126")  # PS 1.0.6 включал v6
+            inbound["address"] = addr
     return out
 
 

@@ -117,11 +117,11 @@ class TestHappReservation:
         assert isinstance(happ_installed(), bool)
 
     def test_config_takes_reserved_subnet_into_account(self, monkeypatch):
+        # choose_tun_addresses() по-прежнему возвращает [v4, v6], но в конфиг
+        # (с 02.10.2026) попадает только IPv4: см. test_tun_is_ipv4_only_no_v6_capture
         monkeypatch.setattr("vpn_launcher.win.tunaddr.happ_installed", lambda: True)
         c = cfg.build_sing_box_config(_nodes(), mode="tun")
-        assert c["inbounds"][0]["address"] == [
-            "172.19.0.5/30", "fdfe:dcba:9876::1/126",
-        ]
+        assert c["inbounds"][0]["address"] == ["172.19.0.5/30"]
 
 
 class TestWiringIntoConfig:
@@ -130,9 +130,8 @@ class TestWiringIntoConfig:
             "vpn_launcher.win.tunaddr.assigned_addresses", lambda: {"172.19.0.1"}
         )
         c = cfg.build_sing_box_config(_nodes(), mode="tun")
-        assert c["inbounds"][0]["address"] == [
-            "172.19.0.5/30", "fdfe:dcba:9876::1/126",
-        ]
+        # v6 в конфиг не проходит: TUN только IPv4 (02.10.2026, см. выше)
+        assert c["inbounds"][0]["address"] == ["172.19.0.5/30"]
 
     def test_config_uses_default_when_probe_finds_conflict_free_machine(
         self, monkeypatch
@@ -141,4 +140,4 @@ class TestWiringIntoConfig:
             "vpn_launcher.win.tunaddr.assigned_addresses", lambda: set()
         )
         c = cfg.build_sing_box_config(_nodes(), mode="tun")
-        assert c["inbounds"][0]["address"] == DEFAULT
+        assert c["inbounds"][0]["address"] == ["172.19.0.1/30"]
