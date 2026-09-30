@@ -433,6 +433,84 @@ class TestTick:
         assert win.btn_connect.isEnabled() and not win.btn_disconnect.isEnabled()
         assert not win.tick.isActive()
 
+    def test_dead_proc_restarts_engine(self, qapp, win, monkeypatch):
+        """Смерть движка -> автоперезапуск с тем же конфигом, тик живёт.
+
+        Отклонение от 1.0.6: раньше обрыв оставлял пользователя без
+        туннеля до ручного переподключения (и без записи в лог).
+        """
+        logs: list[str] = []
+        monkeypatch.setattr("vpn_launcher.ui.window.write_log", logs.append)
+        monkeypatch.setattr("vpn_launcher.ui.window.time.sleep", lambda _s: None)
+
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+
+        class AliveProc:
+            pid = 777
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        calls: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box",
+            lambda cfg, root: calls.append(cfg) or AliveProc(),
+        )
+        win.proc = dead
+        win._sb_cfg = "cfg.json"
+        win._sb_restarts = 0
+        win.tick.start()
+        win._on_tick()
+
+        assert calls == ["cfg.json"], "конфиг последнего подключения"
+        assert win.proc is not None and win.proc.pid == 777
+        assert win.tick.isActive(), "тик продолжает следить за движком"
+        assert win._sb_restarts == 1
+        assert "восстановлено" in win.lbl_status.text()
+        assert any("sing-box exited" in m for m in logs), "причина смерти в логе"
+        assert any("restarted ok" in m for m in logs)
+
+    def test_restart_gives_up_after_three_attempts(self, qapp, win, monkeypatch):
+        """Лимит 3 восстановлений за сессию -> честный обрыв, без петли."""
+        monkeypatch.setattr("vpn_launcher.ui.window.write_log", lambda _m: None)
+        monkeypatch.setattr("vpn_launcher.ui.window.time.sleep", lambda _s: None)
+
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+
+        class AliveProc:
+            pid = 777
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: AliveProc()
+        )
+        win.proc = dead
+        win._sb_cfg = "cfg.json"
+        win._sb_restarts = 0
+        win.tick.start()
+        for _ in range(4):
+            win.proc = dead  # движок снова умирает после каждого перезапуска
+            win._on_tick()
+
+        assert win._sb_restarts == 3
+        assert win.proc is None
+        assert win._sb_cfg is None
+        assert (
+            win.lbl_status.text()
+            == "Соединение оборвалось - sing-box завершился, смотри лог"
+        )
+        assert not win.tick.isActive()
+
     def test_egress_labels(self, qapp, win):
         """631-640: IP / 'Внешний IP недоступен'."""
         win._on_egress("1.2.3.4")

@@ -98,6 +98,22 @@ class TestBuildScripts:
         assert "sing-box.exe" in s  # движок рядом с exe - frozen install_root
         assert "VPNLauncher.spec" in s
 
+    def test_app_script_builds_to_given_distpath(self):
+        # сборка в обход занятого dist\VPNLauncher (локальный exe запущен)
+        s = _read("build-app.ps1")
+        assert "[string]$DistPath" in s
+        assert "--distpath" in s
+
+    def test_app_script_zip_excludes_runtime_files(self):
+        # portable zip не должен нести state.json с личной ссылкой подписки
+        s = _read("build-app.ps1")
+        for f in ("state.json", "config.json", "vpn-launcher.log", "cache.db"):
+            assert f"'{f}'" in s, f
+
+    def test_installer_script_accepts_appdist(self):
+        s = _read("build-installer.ps1")
+        assert "[string]$AppDist" in s  # установщик из произвольной сборки
+
 
 class TestFrozenPaths:
     def test_install_root_frozen_is_exe_dir(self, tmp_path, monkeypatch):

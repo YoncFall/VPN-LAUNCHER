@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(SPEC).resolve().parent
-VERSION = os.environ.get("VPN_VERSION", "2.0.0")
+VERSION = os.environ.get("VPN_VERSION", "2.0.1")
 
 # версия exe: шаблон с плейсхолдерами -> временный файл для PyInstaller
 _tpl = (ROOT / "installer" / "version_info.txt").read_text(encoding="utf-8")

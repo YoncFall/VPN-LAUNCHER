@@ -1,18 +1,22 @@
 # Build VPNLauncher: PyInstaller onedir + portable zip.
 #
 #   .\build-app.ps1                # version from vpn_launcher\__init__.py
-#   .\build-app.ps1 -Version 2.0.0
+#   .\build-app.ps1 -Version 2.0.1
+#   .\build-app.ps1 -DistPath dist-alt   # build elsewhere (running exe locks
+#                                        # dist\VPNLauncher); output goes to
+#                                        # <DistPath>\VPNLauncher
 #
 # Output:
 #   dist\VPNLauncher\              app folder (VPNLauncher.exe + _internal)
-#   dist\VPN-LAUNCHER-<ver>.zip    portable archive
+#   dist\VPN-LAUNCHER-<ver>.zip    portable archive (no runtime files)
 #
 # sing-box.exe (repo root) is copied next to VPNLauncher.exe: frozen
 # paths.install_root() is the exe folder, so the engine must live there.
 
 [CmdletBinding()]
 param(
-    [string]$Version = ''
+    [string]$Version = '',
+    [string]$DistPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,12 +38,14 @@ if (-not (Test-Path (Join-Path $root 'sing-box.exe'))) { throw 'sing-box.exe not
 if (-not (Test-Path (Join-Path $root 'installer\app.ico'))) { throw 'installer\app.ico not found.' }
 
 $env:VPN_VERSION = $Version
-& $pyi --clean --noconfirm (Join-Path $root 'VPNLauncher.spec')
+if (-not $DistPath) { $DistPath = Join-Path $root 'dist' }
+elseif (-not [System.IO.Path]::IsPathRooted($DistPath)) { $DistPath = Join-Path $root $DistPath }
+& $pyi --clean --noconfirm --distpath $DistPath (Join-Path $root 'VPNLauncher.spec')
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed with code $LASTEXITCODE" }
 
-$dist = Join-Path $root 'dist\VPNLauncher'
+$dist = Join-Path $DistPath 'VPNLauncher'
 if (-not (Test-Path (Join-Path $dist 'VPNLauncher.exe'))) {
-    throw 'dist\VPNLauncher\VPNLauncher.exe missing after build'
+    throw "VPNLauncher.exe missing after build (looked in $dist)"
 }
 
 # engine next to the exe (do NOT touch the engine file itself)
@@ -83,7 +89,19 @@ You may obtain a copy of the GPL-3.0 from
 # portable zip for users who prefer archiving
 $zip = Join-Path $root ("dist\VPN-LAUNCHER-" + $Version + ".zip")
 if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $dist '*') -DestinationPath $zip -CompressionLevel Optimal
+# runtime files of a local run must never reach users: state.json carries
+# a personal subscription URL - stage a clean copy before zipping
+$zipStage = Join-Path $env:TEMP ("vpl-zip-" + $Version)
+if (Test-Path $zipStage) { Remove-Item $zipStage -Recurse -Force }
+New-Item -ItemType Directory -Path $zipStage | Out-Null
+Copy-Item (Join-Path $dist '*') $zipStage -Recurse -Force
+foreach ($f in @('state.json', 'config.json', 'vpn-launcher.log', 'singbox.log',
+                 'singbox.log.err', 'cache.db', 'app.pid')) {
+    $p = Join-Path $zipStage $f
+    if (Test-Path $p) { Remove-Item $p -Force; Write-Host "  excluded from zip: $f" }
+}
+Compress-Archive -Path (Join-Path $zipStage '*') -DestinationPath $zip -CompressionLevel Optimal
+Remove-Item $zipStage -Recurse -Force
 
 $dirSize = (Get-ChildItem $dist -Recurse -File | Measure-Object -Property Length -Sum).Sum
 $exe = Get-Item (Join-Path $dist 'VPNLauncher.exe')

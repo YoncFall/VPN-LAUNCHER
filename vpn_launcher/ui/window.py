@@ -118,6 +118,10 @@ class MainWindow(QWidget):
         self._ping_total = 0
         self._auto_pending = False  # ждёт продолжения --autoconnect
         self._tick_count = 0
+        # автоперезапуск движка: путь конфига последнего успешного
+        # подключения + счётчик попыток (см. _on_tick)
+        self._sb_cfg: str | None = None
+        self._sb_restarts = 0
 
         self._apply_mask()
         self._build()
@@ -572,6 +576,9 @@ class MainWindow(QWidget):
                 time.sleep(0.05)
             if self.proc.poll() is not None:
                 raise RuntimeError("sing-box завершился: " + _read_sb_err())
+            # движок жив - запоминаем конфиг для автоперезапуска в _on_tick
+            self._sb_cfg = str(cfg)
+            self._sb_restarts = 0
             if mode == "proxy":
                 set_proxy_on()
             self.btn_disconnect.setEnabled(True)
@@ -587,6 +594,7 @@ class MainWindow(QWidget):
             self.tick.start()
         except Exception as ex:
             write_log(f"connect ERROR: {ex}")
+            self._sb_cfg = None
             self._status("Не удалось подключиться", theme.DANGER)
             self.btn_connect.setEnabled(True)
             self._msg(str(ex), "Ошибка подключения", icon="error")
@@ -595,6 +603,7 @@ class MainWindow(QWidget):
         """btnDisconnect.Add_Click (VPN.ps1:577-589)."""
         stop_sing_box(self.proc)
         self.proc = None
+        self._sb_cfg = None
         set_proxy_off()
         self.tick.stop()
         self.btn_connect.setEnabled(True)
@@ -629,9 +638,20 @@ class MainWindow(QWidget):
     def _on_tick(self) -> None:
         self._tick_count += 1
         if self.proc is not None and self.proc.poll() is not None:
+            # причина гибели иначе невидима: stderr молчит, а лог движка
+            # обрезается при каждом старте (30.09.2026: exit 1 без записи)
+            write_log(
+                f"sing-box exited (code {self.proc.returncode}), "
+                f"stderr tail: {_sb_err_tail()}"
+            )
+            if self._sb_cfg is not None and self._sb_restarts < 3 and self._restart_sing_box():
+                return  # туннель восстановлен, тик продолжает работать
+            if self.proc is None and self._sb_cfg is None:
+                return  # пока перезапускали, пользователь нажал «Отключить»
             self.tick.stop()
             set_proxy_off()
             self.proc = None
+            self._sb_cfg = None
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
             self._status(
@@ -650,12 +670,49 @@ class MainWindow(QWidget):
             self._egress = w
             w.start()
 
+    def _restart_sing_box(self) -> bool:
+        """Автоперезапуск движка после внезапной смерти (до 3 попыток).
+
+        Отклонение от 1.0.6: там движок падал - пользователь оставался
+        без туннеля до ручного переподключения. 30.09.2026 sing-box
+        умирал (exit 1, stderr пуст) через минуту после старта - без
+        этой ветки обрыв был бы вообще не диагностируем.
+        """
+        self._sb_restarts += 1
+        attempt = self._sb_restarts
+        write_log(f"sing-box restart attempt {attempt}/3")
+        self._status(f"sing-box завершился - перезапуск {attempt}/3...", theme.WARN)
+        QApplication.processEvents()
+        try:
+            proc = start_sing_box(self._sb_cfg, install_root())
+        except OSError as ex:
+            write_log(f"sing-box restart ERROR: {ex}")
+            return False
+        # падение на старте (FATAL в конфиге/адресе) видно меньше чем за 1с
+        for _ in range(30):
+            QApplication.processEvents()
+            time.sleep(0.05)
+            if proc.poll() is not None:
+                break
+        if proc.poll() is not None:
+            write_log(f"sing-box restart failed (code {proc.returncode}), "
+                      f"stderr tail: {_sb_err_tail()}")
+            stop_sing_box(proc)
+            return False
+        if self._sb_cfg is None:
+            # на время перезапуска пользователь нажал «Отключить»
+            stop_sing_box(proc)
+            return False
+        self.proc = proc
+        write_log(f"sing-box restarted ok (attempt {attempt})")
+        self._status(f"Соединение восстановлено (перезапуск {attempt}/3)", theme.ACCENT2)
+        return True
+
     def _on_egress(self, ip: str) -> None:
         self.lbl_egress.setText(f"Внешний IP: {ip}")
         self.lbl_egress.setStyleSheet(
             f"color: {theme.ACCENT.name()}; background: transparent;"
         )
-
     def _on_egress_failed(self, _msg: str) -> None:
         self.lbl_egress.setText("Внешний IP недоступен")
         self.lbl_egress.setStyleSheet(f"color: {_GRAY.name()}; background: transparent;")
@@ -727,6 +784,12 @@ def _read_sb_err() -> str:
         )
     except OSError:
         return ""
+
+
+def _sb_err_tail(lines: int = 5) -> str:
+    """Последние строки stderr одной строкой - для журнала обрыва/перезапуска."""
+    text = _read_sb_err().strip().splitlines()
+    return " | ".join(text[-lines:]) if text else "(пусто)"
 
 
 def main(argv: list[str] | None = None) -> int:

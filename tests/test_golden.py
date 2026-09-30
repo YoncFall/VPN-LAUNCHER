@@ -44,6 +44,26 @@ CONFIG_CASES = [
 ]
 
 
+def _ps_parity_view(built: dict) -> dict:
+    """Конфиг в том виде, какой дал бы оригинальный core.ps1 1.0.6.
+
+    Golden сняты PowerShell-версией; с 30.09.2026 Python-версия намеренно
+    уходит от неё в tun-инбаунде (сознательные отклонения, см. core/config.py
+    и README): strict_route=true убивал DNS на время туннеля (WFP режет
+    порт 53 вне туннеля), а авто-default 0.0.0.0/0 проигрывал по метрике
+    default чужого VPN (Happ). Для сравнения с эталоном поля приводятся к
+    PS-виду; фактические значения проверяет tests/test_config.py.
+    """
+    import copy
+
+    out = copy.deepcopy(built)
+    for inbound in out.get("inbounds", []):
+        if inbound.get("type") == "tun":
+            inbound["strict_route"] = True
+            inbound.pop("route_address", None)
+    return out
+
+
 def test_parse_plain_matches_golden():
     assert _nodes() == _golden("parse-nodes.json")
 
@@ -59,7 +79,7 @@ def test_b64_and_plain_subscriptions_parse_identically():
 @pytest.mark.parametrize("name,kwargs", CONFIG_CASES)
 def test_config_matches_golden(name: str, kwargs: dict):
     built = cfg.build_sing_box_config(_nodes(), install_root="vpn-golden-root", **kwargs)
-    assert built == _golden(name)
+    assert _ps_parity_view(built) == _golden(name)
 
 
 @pytest.mark.parametrize("name,kwargs", CONFIG_CASES)

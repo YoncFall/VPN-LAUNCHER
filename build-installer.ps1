@@ -3,6 +3,7 @@
 #
 #   .\build-app.ps1            # first: dist\VPNLauncher must exist
 #   .\build-installer.ps1
+#   .\build-installer.ps1 -AppDist dist-alt\VPNLauncher   # pack a staged build
 #
 # What the user gets: download ONE file, double-click, install. No admin
 # rights (installs to %LOCALAPPDATA%\Programs\VPNLauncher), no internet,
@@ -12,7 +13,8 @@
 [CmdletBinding()]
 param(
     [string]$Version = '',
-    [string]$OutDir = ''
+    [string]$OutDir = '',
+    [string]$AppDist = ''   # app folder to pack (default dist\VPNLauncher)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,9 +41,10 @@ $setup = Join-Path $OutDir ("VPN-LAUNCHER-" + $Version + "-Setup.exe")
 foreach ($f in @('Setup.cs', 'app.ico', 'app.manifest')) {
     if (-not (Test-Path (Join-Path $insDir $f))) { throw "installer\$f not found" }
 }
-$appDist = Join-Path $root 'dist\VPNLauncher'
-if (-not (Test-Path (Join-Path $appDist 'VPNLauncher.exe'))) {
-    throw 'dist\VPNLauncher\VPNLauncher.exe not found. Run .\build-app.ps1 first.'
+if (-not $AppDist) { $AppDist = Join-Path $root 'dist\VPNLauncher' }
+elseif (-not [System.IO.Path]::IsPathRooted($AppDist)) { $AppDist = Join-Path $root $AppDist }
+if (-not (Test-Path (Join-Path $AppDist 'VPNLauncher.exe'))) {
+    throw 'VPNLauncher.exe not found in the app folder. Run .\build-app.ps1 first.'
 }
 $sing = Join-Path $root 'sing-box.exe'
 if (-not (Test-Path $sing)) { throw 'sing-box.exe not found in repo root.' }

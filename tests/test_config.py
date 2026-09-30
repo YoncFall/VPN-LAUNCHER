@@ -94,12 +94,21 @@ class TestModesAndRules:
     def test_tun_inbound(self):
         c = build_sing_box_config(_nodes(), mode="tun")
         tun = c["inbounds"][0]
+        # strict_route=false и route_address - сознательные отклонения от
+        # 1.0.6 (WFP резал DNS, default чужого VPN перехватывал трафик);
+        # аргументы - в комментарии у tun-инбаунда в core/config.py
         assert tun == {
             "type": "tun", "tag": "tun-in", "interface_name": "vpn-launcher-tun",
             "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"], "mtu": 1500,
-            "auto_route": True, "strict_route": True, "stack": "mixed",
+            "auto_route": True, "strict_route": False,
+            "route_address": ["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"],
+            "stack": "mixed",
         }
         assert len(c["inbounds"]) == 1
+
+    def test_proxy_has_no_tun_route_address(self):
+        c = build_sing_box_config(_nodes(), mode="proxy")
+        assert not any(i.get("type") == "tun" for i in c["inbounds"])
 
     def test_proxy_inbounds_and_socks_port(self):
         from vpn_launcher.paths import SOCKS_PORT
