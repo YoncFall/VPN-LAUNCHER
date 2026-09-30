@@ -52,6 +52,15 @@ def _await(qapp: QApplication, pred, timeout: float = 5.0) -> bool:
     return False
 
 
+def test_window_pos_arg_parses_and_fails_safe():
+    """--window-pos из передачи окна: битый аргумент -> None (центр экрана)."""
+    from vpn_launcher.ui.window import _window_pos_arg
+
+    assert _window_pos_arg(["app", "--window-pos=10,20", "--autoconnect"]) == (10, 20)
+    assert _window_pos_arg(["app", "--window-pos=bad"]) is None
+    assert _window_pos_arg(["app", "--autoconnect"]) is None
+
+
 @pytest.fixture
 def win(qapp):
     from vpn_launcher.ui.window import MainWindow
@@ -346,6 +355,45 @@ class TestConnect:
         assert saved["mode"] == "tun"
         assert saved["selected"] == "tag1"
         assert saved["subUrl"] == "https://sub.example/x"
+
+    @pytest.mark.parametrize("shown", [True, False])
+    def test_tun_elevation_hands_window_over(self, qapp, win, monkeypatch, shown):
+        """Бесшовная передача окна (по просьбе: окно не должно исчезать).
+
+        Порядок: событие -> спавн нового с --window-pos -> ожидание сигнала
+        (new window показано) -> освобождение события -> close старого.
+        Даже если сигнал не пришёл (shown=False, таймаут), старое окно
+        всё равно закрывается - как раньше.
+        """
+        events: list = []
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
+        win._msg_confirm = lambda text, title="": True
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.create_window_shown_event", lambda: 111
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.relaunch_elevated",
+            lambda args: events.append(("relaunch", list(args))),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.wait_window_shown",
+            lambda h, timeout_ms=0, pump=None: events.append(("wait", h)) or shown,
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.release_window_shown_event",
+            lambda h: events.append(("release", h)),
+        )
+        monkeypatch.setattr(win, "close", lambda: events.append(("close",)))
+        win._connect_click()
+        assert [e[0] for e in events] == ["relaunch", "wait", "release", "close"]
+        rel_args = events[0][1]
+        assert rel_args[0] == "--autoconnect"
+        assert rel_args[1].startswith("--window-pos=")
+        assert win.lbl_status.text() == "Запуск с правами администратора..."
 
     def test_disconnect(self, qapp, win):
         """btnDisconnect (577-589); лампочки гаснут плавно (по просьбе)."""

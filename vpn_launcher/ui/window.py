@@ -49,7 +49,14 @@ from vpn_launcher.ui.widgets.neon_list import NeonList
 from vpn_launcher.ui.widgets.picker import GamePicker
 from vpn_launcher.ui.widgets.radio import GameRadio
 from vpn_launcher.ui.widgets.title_bar import TitleBar
-from vpn_launcher.win.elevate import is_elevated, relaunch_elevated
+from vpn_launcher.win.elevate import (
+    create_window_shown_event,
+    is_elevated,
+    relaunch_elevated,
+    release_window_shown_event,
+    signal_window_shown,
+    wait_window_shown,
+)
 from vpn_launcher.win.mutex import acquire_instance, focus_existing_window
 from vpn_launcher.win.proc import get_running_exe_list, start_sing_box, stop_sing_box
 from vpn_launcher.win.proxy import set_proxy_on, set_proxy_off
@@ -537,16 +544,33 @@ class MainWindow(QWidget):
                 self._status("Отменено - подключение не выполнено", theme.DANGER)
                 self.btn_connect.setEnabled(True)
                 return
+            # Бесшовная передача окна (по просьбе: окно не должно исчезать
+            # при подключении): событие создаём ДО спавна (иначе гонка),
+            # позицию окна передаём новому экземпляру, старое гасим только
+            # после того, как новое показало своё окно - оно встаёт ровно
+            # поверх и переход не виден. Подробности - win/elevate.py.
+            ready = create_window_shown_event()
             try:
-                relaunch_elevated(["--autoconnect"])
+                p = self.pos()
+                relaunch_elevated(
+                    ["--autoconnect", f"--window-pos={p.x()},{p.y()}"]
+                )
             except OSError:
                 # лог 'elevation ERROR: ...' пишет сам relaunch_elevated
+                release_window_shown_event(ready)
                 self._status("Не удалось получить права администратора", theme.DANGER)
                 self.btn_connect.setEnabled(True)
                 return
             # цвет статуса остаётся Warn - PS его не переназначает (519)
             self._status("Запуск с правами администратора...")
             QApplication.processEvents()
+            if ready is not None:
+                if not wait_window_shown(
+                    ready, timeout_ms=15000, pump=lambda: QApplication.processEvents()
+                ):
+                    # новое окно не показалось - закрываемся как раньше
+                    write_log("window handoff: new window did not show in 15s")
+                release_window_shown_event(ready)
             self.close()
             return
 
@@ -792,6 +816,21 @@ def _sb_err_tail(lines: int = 5) -> str:
     return " | ".join(text[-lines:]) if text else "(пусто)"
 
 
+def _window_pos_arg(args: list[str]) -> tuple[int, int] | None:
+    """--window-pos=X,Y (граница передачи окна при TUN-повышении прав).
+
+    None - аргумента нет или он битый (тогда окно центрируется, как обычно).
+    """
+    for a in args:
+        if a.startswith("--window-pos="):
+            try:
+                x_str, y_str = a.split("=", 1)[1].split(",")
+                return int(x_str), int(y_str)
+            except ValueError:
+                return None
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
     autoconnect = "--autoconnect" in args
@@ -805,9 +844,16 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("yoncfall-tech")
 
     win = MainWindow()
-    scr = app.primaryScreen().availableGeometry()
-    win.move(scr.center().x() - WIN_W // 2, scr.center().y() - WIN_H // 2)
+    pos = _window_pos_arg(args)
+    if pos is not None:
+        win.move(pos[0], pos[1])  # окно от предыдущего экземпляра (передача)
+    else:
+        scr = app.primaryScreen().availableGeometry()
+        win.move(scr.center().x() - WIN_W // 2, scr.center().y() - WIN_H // 2)
     win.show()
+    # сторона-наследник при TUN-повышении прав: разбудить старое окно,
+    # чтобы оно закрылось (бесшовная передача) - см. win/elevate.py
+    signal_window_shown()
 
     if autoconnect:
         QTimer.singleShot(700, win.autoconnect)  # AutoTimer.Interval = 700

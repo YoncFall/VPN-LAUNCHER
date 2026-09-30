@@ -155,6 +155,23 @@ class TestElevate:
         with pytest.raises(OSError, match="UAC cancelled"):
             elevate.relaunch_elevated([])
 
+    def test_window_shown_event_roundtrip(self):
+        """Передача окна: событие не сигналено, пока новое окно не показано."""
+        handle = elevate.create_window_shown_event()
+        assert handle is not None
+        try:
+            assert elevate.wait_window_shown(handle, timeout_ms=100) is False
+            elevate.signal_window_shown()  # «новое окно показано»
+            assert elevate.wait_window_shown(handle, timeout_ms=2000) is True
+        finally:
+            elevate.release_window_shown_event(handle)
+        elevate.release_window_shown_event(None)  # безопасно для None
+
+    def test_signal_without_waiter_is_harmless(self):
+        # обычный запуск: никто не ждёт - событие создаётся, сигналится
+        # и умирает вместе с процессом, без следов
+        elevate.signal_window_shown()
+
 
 # ---------------- mutex ----------------
 
@@ -170,6 +187,17 @@ class TestMutex:
         assert mutex._mutex_name() == mutex.MUTEX_NAME
         monkeypatch.setattr(mutex.elevate, "is_elevated", lambda: True)
         assert mutex._mutex_name() == mutex.MUTEX_NAME_ELEVATED
+
+    def test_clear_pid_keeps_foreign_pid(self, tmp_path, monkeypatch):
+        """Передача окна: atexit старого экземпляра не сносит pid нового."""
+        pf = tmp_path / "app.pid"
+        monkeypatch.setattr(mutex, "_pid_file", lambda: pf)
+        pf.write_text("424242", encoding="utf-8")
+        mutex._clear_pid()
+        assert pf.exists()  # чужой pid - файл не трогаем
+        pf.write_text(str(os.getpid()), encoding="utf-8")
+        mutex._clear_pid()
+        assert not pf.exists()  # свой - удаляем
 
     def test_other_process_blocks_and_release_allows(self):
         """Ключевая семантика Host.cs: чужой процесс -> False, после выхода -> True.

@@ -84,6 +84,11 @@ def _mark_pid() -> None:
 
 def _clear_pid() -> None:
     try:
+        pid = _pid_file().read_text(encoding="utf-8").strip()
+        if pid != str(os.getpid()):
+            # файл уже переписан новым экземпляром (передача окна при
+            # TUN-повышении прав) - не сносим чужой pid
+            return
         _pid_file().unlink()
     except OSError:
         pass  # как Host.cs ClearPid: не мешаем выходу
