@@ -501,7 +501,8 @@ class TestConnect:
             "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
         )
         monkeypatch.setattr(
-            "vpn_launcher.ui.window.install_kill_switch", ks_calls.append
+            "vpn_launcher.ui.window.install_kill_switch",
+            lambda addrs: ks_calls.append(addrs) or True,  # фильтры повесились
         )
         win.radio_tun.set_checked(True)
         win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
@@ -558,6 +559,155 @@ class TestConnect:
         assert not cfg_path.exists(), "после сбоя креды не должны остаться на диске"
         assert win._sb_cfg is None and win._sb_cfg_data is None
         assert win._msgs and win._msgs[0][2] == "error"
+
+    def test_connect_failure_after_proxy_on_clears_proxy(
+        self, qapp, win, monkeypatch, tmp_path
+    ):
+        """S2-прокси: сбой ПОСЛЕ включения прокси снимает наш ProxyServer.
+
+        Было: set_proxy_on() отработал, исключение уходило в except без
+        set_proxy_off - в HKCU оставался наш прокси на живой порт выключенного
+        движка (часть приложений без интернета, пока пользователь не отключит).
+        """
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text("{}", encoding="utf-8")
+        off: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.set_proxy_off", lambda: off.append(1)
+        )
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: str(cfg_path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+
+        def boom(*_a, **_k):
+            raise RuntimeError("led broken")
+
+        # исключение ПОСЛЕ set_proxy_on: падает свет лампочки (630 в window.py)
+        monkeypatch.setattr(win.led_status, "light_up", boom)
+        win.radio_tun.set_checked(False)  # _mode() смотрит только на radio_tun
+        win.radio_proxy.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "Не удалось подключиться" in win.lbl_status.text()
+        assert off == [1], "наш системный прокси обязан сниматься при сбое"
+
+    @staticmethod
+    def _ks_decline_mocks(monkeypatch, tmp_path):
+        """Общая обвязка: TUN-подключение, kill switch не установился."""
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(
+            json.dumps(
+                {"inbounds": [{"type": "tun", "address": ["172.19.0.1/30"]}]}
+            ),
+            encoding="utf-8",
+        )
+
+        class FakeProc:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.new_sing_box_config",
+            lambda *a, **k: str(cfg_path),
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.test_sing_box_config", lambda p: (True, "")
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.install_kill_switch", lambda addrs: False
+        )
+        stops: list = []
+        removed: list = []
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.stop_sing_box", lambda p: stops.append(p)
+        )
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.remove_kill_switch", lambda: removed.append(1)
+        )
+        return cfg_path, stops, removed
+
+    def test_kill_switch_failed_declined_cancels_connect(
+        self, qapp, win, monkeypatch, tmp_path
+    ):
+        """S6: kill switch не установился -> «Нет» = честная отмена.
+
+        Было: TUN подключался молча без защиты (только запись в лог) - тихая
+        утечка при обрыве движка. Теперь: отмена, движок остановлен,
+        частичные фильтры сняты, статус говорит причину.
+        """
+        cfg_path, stops, removed = self._ks_decline_mocks(monkeypatch, tmp_path)
+        win._msg_confirm = lambda text, title="": (
+            win._confirms.append((text, title)) or False
+        )
+        win.radio_tun.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "ПОДКЛЮЧЕНО" not in win.lbl_status.text()
+        assert "Отменено: kill switch не установлен" in win.lbl_status.text()
+        assert len(stops) == 1 and win.proc is None, "движок должен остановиться"
+        assert removed, "частичные фильтры должны сниматься"
+        assert win.btn_connect.isEnabled() and not win.btn_disconnect.isEnabled()
+        assert not win.tick.isActive()
+        assert win._confirms and "kill switch" in win._confirms[0][0].lower()
+        assert not win._msgs, "отмена - не ошибка, лишний диалог не нужен"
+        assert not cfg_path.exists(), "config.json должен быть удалён"
+        assert win._sb_cfg is None and win._sb_cfg_data is None
+
+    def test_kill_switch_failed_accepted_continues(
+        self, qapp, win, monkeypatch, tmp_path
+    ):
+        """S6: «Да» в том же диалоге = осознанное продолжение без защиты."""
+        self._ks_decline_mocks(monkeypatch, tmp_path)
+        win._msg_confirm = lambda text, title="": (
+            win._confirms.append((text, title)) or True
+        )
+        win.radio_tun.set_checked(True)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+
+        win._connect_click()
+
+        assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
+        assert win._confirms and "БЕЗ защиты" in win._confirms[0][0]
 
     def test_restart_rewrites_config_from_memory(self, qapp, win, monkeypatch):
         """Автоперезапуск пересоздаёт config.json из памяти и снова удаляет."""

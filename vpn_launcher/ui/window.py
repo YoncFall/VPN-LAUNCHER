@@ -63,7 +63,11 @@ from vpn_launcher.win.elevate import (
 )
 from vpn_launcher.win.mutex import acquire_instance, focus_existing_window
 from vpn_launcher.win.proc import get_running_exe_list, start_sing_box, stop_sing_box
-from vpn_launcher.win.proxy import set_proxy_on, set_proxy_off
+from vpn_launcher.win.proxy import (
+    set_proxy_off,
+    set_proxy_on,
+    startup_proxy_cleanup,
+)
 from vpn_launcher.win.wfp import install_kill_switch, remove_kill_switch
 from vpn_launcher.workers import EgressWorker, PingWorker, SubscriptionWorker
 
@@ -584,6 +588,7 @@ class MainWindow(QWidget):
         self._status("Генерация конфига...")  # цвет не меняем (как PS, 526)
         QApplication.processEvents()
         cfg = None  # путь записанного конфига - для purge в except (S2)
+        proxy_on = False  # включили наш системный прокси? (снять при сбое)
         try:
             cfg = new_sing_box_config(self.nodes, sel, mode, apps)
             ok, err = test_sing_box_config(cfg)
@@ -617,9 +622,33 @@ class MainWindow(QWidget):
             self._sb_cfg_data = _read_cfg_data(cfg)
             purge_config_file(cfg)
             if mode == "tun":
-                install_kill_switch(_tun_addresses(self._sb_cfg_data))
+                if not install_kill_switch(_tun_addresses(self._sb_cfg_data)):
+                    # S6: фильтры не повесились (GPO/антивирус/права WFP) -
+                    # раньше подключение шло молча, только с записью в лог.
+                    # Теперь честно спрашиваем: «Нет» = отмена с остановкой
+                    # движка, «Да» = осознанный риск без защиты.
+                    write_log("kill switch NOT installed - спрашиваем пользователя")
+                    if not self._msg_confirm(
+                        "Не удалось установить kill switch - защита от утечки "
+                        "трафика при обрыве туннеля не работает.\n\n"
+                        "Если sing-box упадёт, трафик пойдёт мимо VPN.\n\n"
+                        "Продолжить подключение БЕЗ защиты?",
+                        "Kill switch не установлен",
+                    ):
+                        write_log("connect отменён: kill switch не установлен")
+                        stop_sing_box(self.proc)
+                        self.proc = None
+                        self._sb_cfg = None
+                        self._sb_cfg_data = None
+                        remove_kill_switch()  # страховка: снять частичные фильтры
+                        self._status(
+                            "Отменено: kill switch не установлен", theme.DANGER
+                        )
+                        self.btn_connect.setEnabled(True)
+                        return
             if mode == "proxy":
                 set_proxy_on()
+                proxy_on = True
             self.btn_disconnect.setEnabled(True)
             nsel = f"{len(sel)} сервер(а)" if sel else "авто-тест всех"
             self._status(
@@ -637,6 +666,8 @@ class MainWindow(QWidget):
             self._sb_cfg = None
             self._sb_cfg_data = None
             remove_kill_switch()  # на случай, если фильтры успели повесить
+            if proxy_on:
+                set_proxy_off()  # S2-прокси: сбой не оставляет наш прокси в HKCU
             self._status("Не удалось подключиться", theme.DANGER)
             self.btn_connect.setEnabled(True)
             self._msg(str(ex), "Ошибка подключения", icon="error")
@@ -904,6 +935,9 @@ def main(argv: list[str] | None = None) -> int:
         focus_existing_window()
         return 0
     purge_config_file()  # сирота от прошлого запуска: движок давно не жив
+    # S2-прокси: краш в прокси-режиме оставляет наш ProxyServer на мёртвом
+    # порту - снимаем (только если это точный наш формат; чужие не трогаем)
+    startup_proxy_cleanup()
     app = QApplication([args[0]] if args else [])
     app.setStyle("Fusion")
     app.setApplicationName("VPN LAUNCHER")

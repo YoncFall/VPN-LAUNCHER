@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from vpn_launcher.paths import install_root
-from vpn_launcher.win import autostart, elevate, mutex, proc
+from vpn_launcher.paths import SOCKS_PORT, install_root
+from vpn_launcher.win import autostart, elevate, mutex, proc, proxy
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -50,6 +50,7 @@ class _FakeReg:
     KEY_READ = 1
     KEY_SET_VALUE = 2
     REG_SZ = 1
+    REG_DWORD = 4
 
     def __init__(self) -> None:
         self.store: dict[str, dict[str, str]] = {}
@@ -75,6 +76,59 @@ def fake_autostart(monkeypatch):
     monkeypatch.setattr(autostart, "winreg", reg)
     monkeypatch.setattr(autostart, "write_log", logs.append)
     return reg, logs
+
+
+# ---------------- proxy (системный прокси, сирота на старте) ----------------
+
+
+@pytest.fixture
+def fake_proxy(monkeypatch):
+    reg = _FakeReg()
+    logs: list[str] = []
+    monkeypatch.setattr(proxy, "winreg", reg)
+    monkeypatch.setattr(proxy, "write_log", logs.append)
+    return reg, logs
+
+
+class TestProxyStartupCleanup:
+    """startup_proxy_cleanup: краш в прокси-режиме не оставляет наш прокси
+    на мёртвом порту; чужие прокси не трогаем."""
+
+    OUR = f"socks=127.0.0.1:{SOCKS_PORT};http=127.0.0.1:{SOCKS_PORT + 1}"
+
+    def test_removes_our_orphan(self, fake_proxy):
+        reg, logs = fake_proxy
+        reg.store[proxy._KEY] = {"ProxyEnable": 1, "ProxyServer": self.OUR}
+        assert proxy.startup_proxy_cleanup() is True
+        vals = reg.store[proxy._KEY]
+        assert vals["ProxyEnable"] == 0, "наш сиротский прокси должен сниматься"
+        assert vals["ProxyServer"] == ""
+        assert any("сирота" in line for line in logs)
+        assert any("system proxy OFF" == line for line in logs)
+
+    def test_foreign_proxy_untouched(self, fake_proxy):
+        """Чужой прокси (не наш формат) не трогаем - не ломаем чужую настройку."""
+        reg, _ = fake_proxy
+        reg.store[proxy._KEY] = {
+            "ProxyEnable": 1,
+            "ProxyServer": "http=corp-proxy:8080",
+        }
+        assert proxy.startup_proxy_cleanup() is False
+        assert reg.store[proxy._KEY] == {
+            "ProxyEnable": 1,
+            "ProxyServer": "http=corp-proxy:8080",
+        }
+
+    def test_disabled_is_noop(self, fake_proxy):
+        reg, _ = fake_proxy
+        reg.store[proxy._KEY] = {"ProxyEnable": 0, "ProxyServer": self.OUR}
+        assert proxy.startup_proxy_cleanup() is False
+        assert reg.store[proxy._KEY] == {"ProxyEnable": 0, "ProxyServer": self.OUR}
+
+    def test_missing_values_no_crash(self, fake_proxy):
+        reg, _ = fake_proxy
+        reg.store[proxy._KEY] = {}
+        assert proxy.startup_proxy_cleanup() is False
 
 
 class TestAutostart:
