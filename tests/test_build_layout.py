@@ -76,6 +76,45 @@ class TestInstallerAssets:
         assert "if (written != null) return;" in cs
 
 
+class TestSetupSideBySide:
+    """Установка второй копией рядом с работающей (30.09.2026).
+
+    Раньше StopApp гасил ЛЮБОЙ процесс VPNLauncher, включая копию из чужой
+    папки: установка новой версии убивала работающую старую. Kill() обрывает
+    её подключение и оставляет сирот kill switch и sing-box - убрать их умеет
+    только корректное закрытие самого приложения. Теперь лаунчер
+    останавливается лишь когда свой exe уже стоит в целевой папке
+    (обновление/удаление); первая установка чужие копии не трогает.
+    """
+
+    def test_launcher_stopped_only_when_own_exe_in_target(self):
+        cs = _read("installer/Setup.cs")
+        # решает наличие своего exe, а не путь процесса: для повышенного
+        # процесса MainModule недоступен, и старая проверка врала бы
+        assert "File.Exists(Path.Combine(target, ExeName))" in cs
+        assert "if (!ownExeInTarget) continue;" in cs
+
+    def test_wait_loop_ignores_foreign_launcher(self):
+        # иначе первая установка провисала бы на 6 секунд с ложным
+        # предупреждением "программа всё ещё работает после остановки"
+        cs = _read("installer/Setup.cs")
+        assert "IsAppRunning(ownExeInTarget)" in cs
+        assert "static bool IsAppRunning(bool ownExeInTarget)" in cs
+
+    def test_uninstall_aims_stopapp_at_real_install_dir(self):
+        # TargetDir по умолчанию - DefaultDir(): установка в нестандартную
+        # папку иначе не гасит свой же exe и не удаляется
+        cs = _read("installer/Setup.cs")
+        assert "TargetDir = dir;" in cs
+
+    def test_foreign_copy_is_never_killed_on_fresh_install(self):
+        cs = _read("installer/Setup.cs")
+        # ветка гашения лаунчера обязана идти раньше безусловного Kill
+        i_gate = cs.index("if (!ownExeInTarget) continue;")
+        i_kill = cs.index('Log("останавливаю процесс " + name')
+        assert i_gate < i_kill
+
+
 class TestBuildScripts:
     def test_scripts_are_ascii(self):
         # правило репо: .ps1 только ASCII (PowerShell 5.1 ломает чтение)

@@ -35,7 +35,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "2.0.2";
+    const string Version = "2.1.0";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
@@ -893,6 +893,11 @@ static class Setup
         }
         Log("  папка      : " + dir);
         if (dir != SelfDir) Log("  беру папку из реестра, а не откуда запущен");
+        // StopApp и ожидание остановки целятся в TargetDir, а по умолчанию
+        // это DefaultDir(): для установки в нестандартную папку (/DIR,
+        // ручной выбор) цель была неверной - лаунчер из неё не гасился и
+        // папка не удалялась. Приводим к реальной папке программы.
+        TargetDir = dir;
 
         bool silent = Silent;
         Log("  silent     : " + silent);
@@ -1048,6 +1053,17 @@ static class Setup
         string target = "";
         try { target = new DirectoryInfo(TargetDir).FullName.TrimEnd('\\'); } catch { }
 
+        // Лаунчер гасим только если свой exe уже стоит в целевой папке -
+        // это обновление или удаление, и без остановки файл не заменить.
+        // Первая установка (в т.ч. второй копией рядом с работающей другой
+        // версией - портативным билдом, прошлым релизом) чужие процессы не
+        // трогает: своих файлов они не держат, а Kill() обрывает их
+        // подключение и оставляет сирот kill switch и sing-box - убрать их
+        // умеет только корректное закрытие самого приложения.
+        bool ownExeInTarget = false;
+        try { ownExeInTarget = target.Length > 0 && File.Exists(Path.Combine(target, ExeName)); } catch { }
+        Log("цель содержит наш exe: " + ownExeInTarget);
+
         try
         {
             foreach (string name in new string[] { "VPNLauncher", "uninstall", "sing-box" })
@@ -1066,10 +1082,16 @@ static class Setup
                     }
                     catch { }
 
-                    // VPNLauncher останавливаем всегда (может быть повышенным),
-                    // uninstall.exe и sing-box - только когда они лежат в целевой
+                    // VPNLauncher - только при обновлении/удалении (см. выше;
+                    // для повышенного процесса путь всё равно не читается,
+                    // поэтому решает наличие своего exe в целевой папке);
+                    // uninstall.exe и sing-box - когда они лежат в целевой
                     // папке: чужой sing-box (например, от другой программы) не трогаем
-                    if (name != "VPNLauncher" && !inTarget) continue;
+                    if (name == "VPNLauncher")
+                    {
+                        if (!ownExeInTarget) continue;
+                    }
+                    else if (!inTarget) continue;
 
                     Log("останавливаю процесс " + name + " pid " + p.Id + " (" + path + ")");
                     try { p.CloseMainWindow(); } catch { }
@@ -1088,7 +1110,7 @@ static class Setup
         // ждём, пока Windows реально отпустит exe, иначе копирование падает
         for (int i = 0; i < 30; i++)
         {
-            if (!IsAppRunning() && !IsUninstallerRunning(target, me)) return;
+            if (!IsAppRunning(ownExeInTarget) && !IsUninstallerRunning(target, me)) return;
             System.Threading.Thread.Sleep(200);
         }
         Log("предупреждение: программа всё ещё работает после остановки");
@@ -1119,8 +1141,13 @@ static class Setup
         try { return p.HasExited; } catch { return true; }
     }
 
-    static bool IsAppRunning()
+    // Свои файлы мог занять только лаунчер из целевой папки, поэтому на
+    // первой установке (чужие копии мы не останавливали) ждать нечего:
+    // иначе установка провисала бы на 6 секунд и писала ложное
+    // "программа всё ещё работает после остановки".
+    static bool IsAppRunning(bool ownExeInTarget)
     {
+        if (!ownExeInTarget) return false;
         try
         {
             foreach (Process p in Process.GetProcessesByName("VPNLauncher"))
