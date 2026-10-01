@@ -32,7 +32,14 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QRegion
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QRegion,
+)
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
 
 from vpn_launcher import __version__
@@ -98,6 +105,21 @@ _GRAY = QColor(128, 128, 128)
 # как Unicode-классы .NET.
 _EXCL_EXE_END = re.compile(r"\.exe$", re.IGNORECASE)
 _EXCL_NAME = re.compile(r"^[\w\-. ]+\.exe$", re.IGNORECASE)
+
+
+def _plural_servers(n: int) -> str:
+    """Русская плюрализация для статуса подключения (2.1.3).
+
+    1 сервер / 2 сервера / 5 серверов / 11 серверов / 21 сервер.
+    """
+    if n % 100 in (11, 12, 13, 14):
+        return "серверов"
+    m = n % 10
+    if m == 1:
+        return "сервер"
+    if m in (2, 3, 4):
+        return "сервера"
+    return "серверов"
 
 # Пикер (по просьбе, 30.09.2026): эти имена всегда в списке, даже когда
 # процессы закрыты. Fill-ProcCombo (порт 1.0.6) кладёт только запущенное, а
@@ -205,12 +227,14 @@ class MainWindow(QWidget):
         )
         self.field_sub.setGeometry(18, 30, 556, 30)
 
+        # ширины пересчитаны (2.1.3): тексты не влезали в кнопки - drawText
+        # с TextDontClip рисовал их сверху соседями/краем карточки
         self.btn_load = GameButton("Загрузить подписку", "ghost", 8, card)
-        self.btn_load.setGeometry(18, 66, 208, 34)
+        self.btn_load.setGeometry(18, 66, 216, 34)
         self.btn_ping = GameButton("Проверить пинг", "ghost", 8, card)
-        self.btn_ping.setGeometry(232, 66, 150, 34)
+        self.btn_ping.setGeometry(240, 66, 172, 34)
         self.btn_log = GameButton("Открыть лог", "ghost", 8, card)
-        self.btn_log.setGeometry(388, 66, 186, 34)
+        self.btn_log.setGeometry(418, 66, 156, 34)
         self.btn_log.clicked.connect(self._open_log)
         self.btn_load.clicked.connect(self._load_click)
         self.btn_ping.clicked.connect(self._ping_click)
@@ -222,9 +246,10 @@ class MainWindow(QWidget):
         _label(card, "СЕРВЕРЫ", 18, 118, 200, 16, theme.TEXT_DIM, theme.f_caps())
         # хинт на строке подписи: в коде 1.0.6 он (300,136) перекрывался с
         # колонкой ПИНГ (480..561) - визуальная коллизия, здесь исправлена
+        # 2.1.3: хинт был 274px при тексте 418px - обрезался слева
         _label(
-            card, "выбери сервер · пусто - авто-тест всех",
-            300, 118, 274, 16, theme.TEXT_DIM, theme.f_sub(), "right",
+            card, "выбери сервер · пусто — авто-тест всех",
+            110, 118, 464, 16, theme.TEXT_DIM, theme.f_sub(), "right",
         )
         _label(card, "ПРОТОКОЛ", 18, 136, 57, 14, theme.TEXT_DIM, theme.f_caps(), "right")
         _label(card, "СЕРВЕР", 81, 136, 300, 14, theme.TEXT_DIM, theme.f_caps())
@@ -240,10 +265,12 @@ class MainWindow(QWidget):
 
         # --- РЕЖИМ (VPN.ps1:177-185) ---
         _label(card, "РЕЖИМ", 18, 352, 200, 16, theme.TEXT_DIM, theme.f_caps())
-        self.radio_tun = GameRadio("Весь трафик - TUN (нужен админ)", True, card)
-        self.radio_tun.setGeometry(18, 371, 270, 36)
+        # 2.1.3: «(нужен админ)» (341px) не влезало в сегмент - текст и
+        # ширины пересчитаны под оба состояния (выбранное = w-28)
+        self.radio_tun = GameRadio("Весь трафик - TUN (админ)", True, card)
+        self.radio_tun.setGeometry(18, 371, 342, 36)
         self.radio_proxy = GameRadio("Системный прокси", False, card)
-        self.radio_proxy.setGeometry(294, 371, 280, 36)
+        self.radio_proxy.setGeometry(366, 371, 208, 36)
         self.radio_tun.toggled.connect(lambda: self._select_mode("tun"))
         self.radio_proxy.toggled.connect(lambda: self._select_mode("proxy"))
 
@@ -256,11 +283,13 @@ class MainWindow(QWidget):
         # exclude. Место отдано переключателю (тот же GameRadio, что и в
         # РЕЖИМ), а зависимый от режима текст переехал в lbl_apps_hint.
         # Геометрия строки не изменилась: 18..574, высота 16, карточка цела.
+        # 2.1.3: сегменты пересчитаны - у выбранного внутренний прямоугольник
+        # уже на 12px (точка), тексты обязаны влезать в худший случай
         self.lbl_appsec = _label(
-            card, "ИСКЛЮЧЕНИЯ", 18, 424, 126, 16, theme.TEXT_DIM, theme.f_caps()
+            card, "ИСКЛЮЧЕНИЯ", 18, 424, 116, 16, theme.TEXT_DIM, theme.f_caps()
         )
         self.radio_excl = GameRadio("Всё, кроме списка", True, card)
-        self.radio_excl.setGeometry(148, 424, 206, 16)
+        self.radio_excl.setGeometry(138, 424, 220, 16)
         self.radio_vpnonly = GameRadio("Только выбранные", False, card)
         self.radio_vpnonly.setGeometry(364, 424, 210, 16)
         self.radio_excl.toggled.connect(
@@ -291,7 +320,7 @@ class MainWindow(QWidget):
         self.list_excl.doubleClicked.connect(lambda *_: self._excl_del())
         self.lbl_apps_hint = _label(
             card,
-            "Список процессов обновляется при запуске. В поле можно вписать имя .exe вручную.",
+            "Список процессов обновляется при запуске",
             18, 550, 556, 16, theme.TEXT_DIM, theme.f_sub(),
         )
 
@@ -299,24 +328,28 @@ class MainWindow(QWidget):
         div4.setGeometry(18, 574, 556, 2)
 
         # --- подключение (VPN.ps1:210-222) ---
+        # 2.1.3: «Проверить конфиг» (176px) не влезал в 130px - ширины
+        # пересчитаны под тексты, гэпы 10 сохранены
         self.btn_connect = GameButton("ПОДКЛЮЧИТЬСЯ", "accent", 9, card)
-        self.btn_connect.setGeometry(18, 586, 288, 42)
+        self.btn_connect.setGeometry(18, 582, 226, 42)
         self.btn_disconnect = GameButton("ОТКЛЮЧИТЬ", "danger", 9, card)
-        self.btn_disconnect.setGeometry(316, 586, 118, 42)
+        self.btn_disconnect.setGeometry(254, 582, 118, 42)
         self.btn_disconnect.setEnabled(False)
         self.btn_testcfg = GameButton("Проверить конфиг", "ghost", 9, card)
-        self.btn_testcfg.setGeometry(444, 586, 130, 42)
+        self.btn_testcfg.setGeometry(382, 582, 192, 42)
         self.btn_connect.clicked.connect(self._connect_click)
         self.btn_disconnect.clicked.connect(self._disconnect_click)
         self.btn_testcfg.clicked.connect(self._testcfg_click)
 
+        # 2.1.3: статус и IP разведены на две строки - статус получил
+        # 530px (было 250, обрезались почти все сообщения), IP ушёл вниз
         self.led_status = Led(10, "off", card)
-        self.led_status.setGeometry(18, 640, 10, 10)
+        self.led_status.setGeometry(18, 630, 10, 10)
         self.lbl_status = _label(
-            card, "Готов", 36, 636, 250, 18, theme.TEXT, theme.f_body(),
+            card, "Готов", 36, 627, 530, 16, theme.TEXT, theme.f_body(),
         )
         self.lbl_egress = _label(
-            card, "", 300, 636, 274, 18, theme.TEXT_DIM, theme.f_mono(), "right"
+            card, "", 18, 644, 556, 16, theme.TEXT_DIM, theme.f_mono(), "right"
         )
 
     def _restore_state(self) -> None:
@@ -345,8 +378,14 @@ class MainWindow(QWidget):
 
     # ---- служебное -------------------------------------------------------
     def _status(self, text: str, color: QColor | None = None) -> None:
-        """Текст статуса; цвет меняем только когда PS трогает ForeColor."""
-        self.lbl_status.setText(text)
+        """Текст статуса; цвет меняем только когда PS трогает ForeColor.
+
+        Длинный текст (имена .exe) элидируется, а не вылезает за лейбл.
+        """
+        fm = QFontMetrics(self.lbl_status.font())
+        self.lbl_status.setText(
+            fm.elidedText(text, Qt.TextElideMode.ElideRight, self.lbl_status.width())
+        )
         if color is not None:
             self.lbl_status.setStyleSheet(
                 f"color: {color.name()}; background: transparent;"
@@ -412,10 +451,12 @@ class MainWindow(QWidget):
         # не «исключения», а перечень процессов, пущенных через VPN
         self.lbl_appsec.setText("ЧЕРЕЗ VPN" if include else "ИСКЛЮЧЕНИЯ")
         self.lbl_apps_hint.setText(
-            "Только эти процессы пойдут через VPN, остальные работают напрямую."
+            # 2.1.3: тексты укорочены под ширину лейбла (556px) - прежние
+            # (726/880px) обрезались, про ручной ввод .exe рассказывает
+            # плейсхолдер поля выше
+            "Только выбранные — через VPN, остальные напрямую"
             if include
-            else "Список процессов обновляется при запуске. "
-            "В поле можно вписать имя .exe вручную."
+            else "Список процессов обновляется при запуске"
         )
 
     def _select_app_mode(self, app_mode: str) -> None:
@@ -762,7 +803,7 @@ class MainWindow(QWidget):
                 set_proxy_on()
                 proxy_on = True
             self.btn_disconnect.setEnabled(True)
-            nsel = f"{len(sel)} сервер(а)" if sel else "авто-тест всех"
+            nsel = f"{len(sel)} {_plural_servers(len(sel))}" if sel else "авто-тест всех"
             self._status(
                 f"ПОДКЛЮЧЕНО  |  pid {self.proc.pid}  |  {nsel}", theme.ACCENT2
             )
@@ -857,7 +898,9 @@ class MainWindow(QWidget):
             self.btn_connect.setEnabled(True)
             self.btn_disconnect.setEnabled(False)
             self._status(
-                "Соединение оборвалось - sing-box завершился, смотри лог",
+                # 2.1.3: сокращено под 530px статус-строки (прежний текст
+                # с именем процесса обрезался; причина - в журнале)
+                "Соединение оборвалось - смотри лог",
                 theme.DANGER,
             )
             if self.state.get("mode") == "tun":
@@ -937,12 +980,21 @@ class MainWindow(QWidget):
         return True
 
     def _on_egress(self, ip: str) -> None:
-        self.lbl_egress.setText(f"Внешний IP: {ip}")
+        # 2.1.3: в include лаунчер сам вне списка - его запрос идёт напрямую,
+        # и подпись это честно называет (иначе «Внешний IP» выглядит как IP
+        # туннеля, хотя выбранные приложения видят другой)
+        if self._app_mode() == APP_MODE_INCLUDE:
+            self.lbl_egress.setText(f"Без VPN: {ip}")
+        else:
+            self.lbl_egress.setText(f"Внешний IP: {ip}")
         self.lbl_egress.setStyleSheet(
             f"color: {theme.ACCENT.name()}; background: transparent;"
         )
     def _on_egress_failed(self, _msg: str) -> None:
-        self.lbl_egress.setText("Внешний IP недоступен")
+        if self._app_mode() == APP_MODE_INCLUDE:
+            self.lbl_egress.setText("Без VPN: недоступен")
+        else:
+            self.lbl_egress.setText("Внешний IP недоступен")
         self.lbl_egress.setStyleSheet(f"color: {_GRAY.name()}; background: transparent;")
 
     def _on_egress_finished(self) -> None:
@@ -961,7 +1013,8 @@ class MainWindow(QWidget):
         self._auto_pending = False
         if not self.nodes:
             self._status(
-                "Не удалось загрузить подписку - проверь ссылку", theme.DANGER
+                # 2.1.3: прежний текст был 540px и обрезался в 530px-строке
+                "Ошибка загрузки - проверь ссылку", theme.DANGER
             )
             return
         self._select_mode("tun")  # rbTun.Checked = $true, rbProxy = $false (672-673)

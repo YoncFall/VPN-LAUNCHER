@@ -25,6 +25,7 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from vpn_launcher.core import state as state_mod  # noqa: E402
+from vpn_launcher.core.config import APP_MODE_EXCLUDE, APP_MODE_INCLUDE  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SUB_FILE = FIXTURES / "subscription.txt"
@@ -168,7 +169,7 @@ class TestAppModeSwitch:
         assert win._app_mode() == "include"
         assert win.radio_vpnonly.checked() and not win.radio_excl.checked()
         assert win.lbl_appsec.text() == "ЧЕРЕЗ VPN"
-        assert "Только эти процессы" in win.lbl_apps_hint.text()
+        assert "Только выбранные" in win.lbl_apps_hint.text()
         assert win.state["appMode"] == "include"
         assert state_mod.load_state()["appMode"] == "include"
         # состав списка при переключении не трогаем
@@ -1081,7 +1082,7 @@ class TestTick:
         win._on_tick()
         assert (
             win.lbl_status.text()
-            == "Соединение оборвалось - sing-box завершился, смотри лог"
+            == "Соединение оборвалось - смотри лог"
         )
         assert win.proc is None
         assert win.btn_connect.isEnabled() and not win.btn_disconnect.isEnabled()
@@ -1161,7 +1162,7 @@ class TestTick:
         assert win._sb_cfg is None
         assert (
             win.lbl_status.text()
-            == "Соединение оборвалось - sing-box завершился, смотри лог"
+            == "Соединение оборвалось - смотри лог"
         )
         assert not win.tick.isActive()
 
@@ -1182,7 +1183,7 @@ class TestAutoconnect:
         assert win._msgs and win._msgs[0][0] == "Вставь ссылку на подписку."
         assert (
             win.lbl_status.text()
-            == "Не удалось загрузить подписку - проверь ссылку"
+            == "Ошибка загрузки - проверь ссылку"
         )
 
     def test_chain_load_select_and_connect(self, qapp, win, monkeypatch):
@@ -1212,3 +1213,97 @@ class TestAutoconnect:
         assert win.lbl_status.text() == "Отменено - подключение не выполнено"
         assert state_mod.load_state()["mode"] == "tun"
         assert win.btn_load.isEnabled()
+
+
+# ---- 2.1.3: посадка надписей в виджеты -------------------------------------
+# GameButton/GameRadio рисуют текст с TextDontClip - переполнение видно
+# сразу: надпись вылезает на соседние кнопки или за край карточки. Раньше
+# таких мест было семь (см. комментарии в _build), теперь - регресс-контроль.
+
+
+class TestUiTextFit:
+    def test_buttons_fit(self, win):
+        """Текст каждой кнопки не шире её drawText-прямоугольника (w-12)."""
+        from PySide6.QtGui import QFontMetricsF
+
+        from vpn_launcher.ui import theme
+        from vpn_launcher.ui.widgets.button import GameButton
+
+        fm = QFontMetricsF(theme.f_btn())
+        found = 0
+        for b in win.findChildren(GameButton):
+            if not b._text:
+                continue  # capmin/capclose рисуют глифы, не текст
+            found += 1
+            adv = int(fm.horizontalAdvance(b._text))
+            assert adv <= b.width() - 12, (
+                f"кнопка «{b._text}»: {adv}px не влезает в {b.width() - 12}px"
+            )
+        assert found >= 9  # набор кнопок основного экрана на месте
+
+    def test_radios_fit(self, win):
+        """Текст сегментов-радио влезает в худший случай: w-28 (выбрано)."""
+        from PySide6.QtGui import QFontMetricsF
+
+        from vpn_launcher.ui import theme
+        from vpn_launcher.ui.widgets.radio import GameRadio
+
+        fm = QFontMetricsF(theme.f_btn())
+        for r in win.findChildren(GameRadio):
+            inner = r.width() - 28  # выбранный сегмент: точка съедает 12px
+            adv = int(fm.horizontalAdvance(r._text))
+            assert adv <= inner, (
+                f"радио «{r._text}»: {adv}px не влезает в {inner}px"
+            )
+
+    def test_status_elides_long_text(self, win):
+        """Длинный статус (имя .exe) обрезается с «…», а не вылезает."""
+        from PySide6.QtGui import QFontMetrics
+
+        win._status("Добавлено в список через VPN: " + "VeryLongName" * 10 + ".exe")
+        fm = QFontMetrics(win.lbl_status.font())
+        assert fm.horizontalAdvance(win.lbl_status.text()) <= win.lbl_status.width()
+
+    def test_hints_fit(self, win):
+        """Подсказки (серверы + список процессов в обоих режимах) влезают."""
+        from PySide6.QtGui import QFontMetricsF
+        from PySide6.QtWidgets import QLabel
+
+        from vpn_launcher.ui import theme
+
+        fm = QFontMetricsF(theme.f_sub())
+        for mode in (APP_MODE_EXCLUDE, APP_MODE_INCLUDE):
+            win._apply_app_mode(mode)
+            adv = int(fm.horizontalAdvance(win.lbl_apps_hint.text()))
+            assert adv <= win.lbl_apps_hint.width(), f"hint в режиме {mode}"
+        server_hint = next(
+            lbl for lbl in win.card.findChildren(QLabel)
+            if "выбери сервер" in lbl.text()
+        )
+        adv = int(fm.horizontalAdvance(server_hint.text()))
+        assert adv <= server_hint.width()
+
+    def test_plural_servers(self):
+        """Плюрализация в статусе подключения: 1 сервер / 3 / 5."""
+        from vpn_launcher.ui.window import _plural_servers
+
+        cases = {
+            1: "сервер", 2: "сервера", 5: "серверов",
+            11: "серверов", 12: "серверов", 21: "сервер",
+            102: "сервера", 111: "серверов",
+        }
+        for n, word in cases.items():
+            assert _plural_servers(n) == word, n
+
+    def test_egress_label_matches_mode(self, win):
+        """2.1.3: в include лаунчер сам вне списка - IP честно подписан."""
+        win._apply_app_mode(APP_MODE_INCLUDE)
+        win._on_egress("5.136.57.28")
+        assert win.lbl_egress.text() == "Без VPN: 5.136.57.28"
+        win._on_egress_failed("timeout")
+        assert win.lbl_egress.text() == "Без VPN: недоступен"
+        win._apply_app_mode(APP_MODE_EXCLUDE)
+        win._on_egress("5.136.57.28")
+        assert win.lbl_egress.text() == "Внешний IP: 5.136.57.28"
+        win._on_egress_failed("timeout")
+        assert win.lbl_egress.text() == "Внешний IP недоступен"
