@@ -541,24 +541,54 @@ class TestConnect:
         assert win._msgs == [("Сначала загрузи подписку.", "", "")]
 
     def test_tun_elevation_cancelled(self, qapp, win, monkeypatch):
-        """474-523: диалог UAC, отказ -> 'Отменено', state уже сохранён."""
+        """2.1.4: окно-подтверждение перед UAC убрано (просьба 01.10).
+
+        Пользователь отказывается в СИСТЕМНОМ UAC-диалоге Windows ->
+        'Отменено', state уже сохранён, кнопка возвращается в строй.
+        """
         monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
-        confirms: list = []
-        win._msg_confirm = lambda text, title="": (
-            confirms.append((text, title)) or False
+
+        def uac_cancelled(args):
+            raise OSError(
+                "elevation failed: ShellExecuteW rc=1223 (UAC cancelled)"
+            )
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.relaunch_elevated", uac_cancelled
+        )
+        # своё окно перед UAC больше не показываем - юзер видит только Windows
+        win._msg_confirm = lambda text, title="": pytest.fail(
+            "окно-подтверждение перед UAC убрано в 2.1.4"
         )
         win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
         win.list_servers.set_nodes(win.nodes)
         win.list_servers.select_index(0)
         win.field_sub.setText("https://sub.example/x")
         win._connect_click()
-        assert len(confirms) == 1 and "TUN" in confirms[0][0]
         assert win.lbl_status.text() == "Отменено - подключение не выполнено"
         assert win.btn_connect.isEnabled()
         saved = state_mod.load_state()
         assert saved["mode"] == "tun"
         assert saved["selected"] == "tag1"
         assert saved["subUrl"] == "https://sub.example/x"
+
+    def test_tun_elevation_failure_is_not_cancel(self, qapp, win, monkeypatch):
+        """Сбой повышения прав (rc не 1223) -> 'Не удалось', не 'Отменено'."""
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
+
+        def failed(args):
+            raise OSError("elevation failed: ShellExecuteW rc=5")
+
+        monkeypatch.setattr("vpn_launcher.ui.window.relaunch_elevated", failed)
+        win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
+        win.list_servers.set_nodes(win.nodes)
+        win.list_servers.select_index(0)
+        win.field_sub.setText("https://sub.example/x")
+        win._connect_click()
+        assert (
+            win.lbl_status.text() == "Не удалось получить права администратора"
+        )
+        assert win.btn_connect.isEnabled()
 
     @pytest.mark.parametrize("shown", [True, False])
     def test_tun_elevation_hands_window_over(self, qapp, win, monkeypatch, shown):
@@ -571,7 +601,9 @@ class TestConnect:
         """
         events: list = []
         monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
-        win._msg_confirm = lambda text, title="": True
+        win._msg_confirm = lambda text, title="": pytest.fail(
+            "окно-подтверждение перед UAC убрано в 2.1.4"
+        )
         win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
         win.list_servers.set_nodes(win.nodes)
         win.list_servers.select_index(0)
@@ -1189,27 +1221,39 @@ class TestAutoconnect:
     def test_chain_load_select_and_connect(self, qapp, win, monkeypatch):
         """700мс-цепочка: загрузка файла -> TUN -> выбор ноды -> клик.
 
-        UAC отменён - цепочка останавливается на 'Отменено', дойдя до
-        btnConnect, что и проверяем (без реального запуска движка).
+        UAC отменён (OSError rc=1223, 2.1.4: без своего окна-подтверждения)
+        - цепочка останавливается на 'Отменено', дойдя до btnConnect, что и
+        проверяем (без реального запуска движка).
         """
         from vpn_launcher.core.subscription import fetch_nodes
 
         nodes = fetch_nodes(str(SUB_FILE))
         win.state["selected"] = nodes[1]["tag"]  # помним прошлый выбор (677-681)
         monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
-        confirms: list = []
-        win._msg_confirm = lambda text, title="": (
-            confirms.append((text, title)) or False
+        relaunches: list = []
+
+        def uac_cancelled(args):
+            relaunches.append(list(args))
+            raise OSError(
+                "elevation failed: ShellExecuteW rc=1223 (UAC cancelled)"
+            )
+
+        monkeypatch.setattr(
+            "vpn_launcher.ui.window.relaunch_elevated", uac_cancelled
+        )
+        win._msg_confirm = lambda text, title="": pytest.fail(
+            "окно-подтверждение перед UAC убрано в 2.1.4"
         )
 
         win.field_sub.setText(str(SUB_FILE))
         win.autoconnect()
         assert win.lbl_status.text() == "Загружаю подписку и подключаюсь..."
 
-        assert _await(qapp, lambda: len(confirms) > 0, timeout=10)
+        assert _await(qapp, lambda: len(relaunches) > 0, timeout=10)
         # TUN выбран (672-673), нода по тегу (677-681), дошли до btnConnect (684)
         assert win.radio_tun.checked() and not win.radio_proxy.checked()
         assert win.list_servers.selected_index() == 1
+        assert "--autoconnect" in relaunches[0]
         assert win.lbl_status.text() == "Отменено - подключение не выполнено"
         assert state_mod.load_state()["mode"] == "tun"
         assert win.btn_load.isEnabled()

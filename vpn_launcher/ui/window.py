@@ -687,20 +687,14 @@ class MainWindow(QWidget):
 
         # TUN требует администратора (VPN.ps1:474-523)
         if mode == "tun" and not is_elevated():
+            # 2.1.4 (просьба 01.10): СОБСТВЕННОЕ окно-подтверждение перед
+            # UAC убрано - пользователь видит только системный запрос
+            # Windows «Запустить от имени администратора?» (одно «Да»
+            # вместо двух окон). Статус оставляем: он виден за промптом и
+            # объясняет, зачем тот появился.
             self._status("Нужны права администратора...", theme.WARN)
             self.btn_connect.setEnabled(False)
             QApplication.processEvents()  # DoEvents
-            ans = self._msg_confirm(
-                'Режим "Весь трафик (TUN)" работает только с правами администратора.\n\n'
-                "Сейчас приложение перезапустится с повышенными правами и подключится само.\n"
-                'В окне Windows нажмите "Да".',
-                "VPN ЛАУНЧЕР BY @YoncFALL",
-            )
-            if not ans:
-                write_log("elevation cancelled by user")
-                self._status("Отменено - подключение не выполнено", theme.DANGER)
-                self.btn_connect.setEnabled(True)
-                return
             # Бесшовная передача окна (по просьбе: окно не должно исчезать
             # при подключении): событие создаём ДО спавна (иначе гонка),
             # позицию окна передаём новому экземпляру, старое гасим только
@@ -712,10 +706,20 @@ class MainWindow(QWidget):
                 relaunch_elevated(
                     ["--autoconnect", f"--window-pos={p.x()},{p.y()}"]
                 )
-            except OSError:
+            except OSError as exc:
                 # лог 'elevation ERROR: ...' пишет сам relaunch_elevated
                 release_window_shown_event(ready)
-                self._status("Не удалось получить права администратора", theme.DANGER)
+                if "UAC cancelled" in str(exc):
+                    # отказ в самом UAC-диалоге Windows: это не сбой,
+                    # а решение пользователя - статус как в старом потоке
+                    write_log("elevation cancelled by user")
+                    self._status(
+                        "Отменено - подключение не выполнено", theme.DANGER
+                    )
+                else:
+                    self._status(
+                        "Не удалось получить права администратора", theme.DANGER
+                    )
                 self.btn_connect.setEnabled(True)
                 return
             # цвет статуса остаётся Warn - PS его не переназначает (519)
