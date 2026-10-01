@@ -247,6 +247,55 @@ class TestAppModeInclude:
         proc_rule = next(r for r in c["route"]["rules"] if "process_name" in r)
         assert proc_rule["process_name"] == ["a.exe", "b.exe"]
 
+    def test_discord_voice_udp_goes_direct_in_include(self, tmp_path, sing_box_exe):
+        # Диагностика 01.10.2026: голос Discord (UDP к 104.29.x:19299/19312)
+        # в include уходил на vless-ноду и не подключался - 13 попыток с
+        # ретраями каждые ~30 с, нода UDP не прокидывает. Голос обязан идти
+        # direct, и правило - ДО общего include-правила (первое совпадение).
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("Discord.exe", "msedge.exe"),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        rules = c["route"]["rules"]
+        voice = next(r for r in rules if r.get("network") == "udp")
+        assert voice["action"] == "route"
+        assert voice["outbound"] == "direct"
+        assert voice["process_name"] == ["Discord.exe"]
+        main = next(r for r in rules if r.get("outbound") == "proxy-group")
+        assert rules.index(voice) < rules.index(main)
+        # текст/медиа Discord и Edge остаются в VPN
+        assert main["process_name"] == ["Discord.exe", "msedge.exe"]
+        # конфиг обязан приниматься движком (network=udp - штатное поле)
+        from vpn_launcher.core import config as cfg
+        ok, err = cfg.test_sing_box_config(
+            cfg.write_config(c, tmp_path / "config-voice.json"),
+            sing_box=sing_box_exe,
+        )
+        assert ok, f"sing-box check failed: {err}"
+
+    def test_voice_rule_absent_without_discord_and_in_exclude(self):
+        # без Discord в списке правила нет; в exclude он и не нужен -
+        # Discord там и так идёт direct
+        for mode_key, lst in (
+            (APP_MODE_INCLUDE, ("mygame.exe",)),
+            (APP_MODE_EXCLUDE, ("Discord.exe",)),
+        ):
+            c = build_sing_box_config(
+                _nodes(), mode="tun", app_list=lst, app_mode=mode_key,
+            )
+            assert not any(r.get("network") == "udp" for r in c["route"]["rules"])
+
+    def test_voice_rule_matches_discord_case_insensitively(self):
+        # запись имени зависит от пикера, матчинг process_name в sing-box
+        # регистронезависим - условие тоже
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("discord.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        voice = next(r for r in c["route"]["rules"] if r.get("network") == "udp")
+        assert voice["outbound"] == "direct"
+        assert voice["process_name"] == ["Discord.exe"]
+
 
 class TestCachePath:
     def test_explicit_install_root(self):

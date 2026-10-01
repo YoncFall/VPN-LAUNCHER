@@ -223,6 +223,23 @@ def build_sing_box_config(
     if mode == "tun":
         routed_apps = _routed_apps(app_mode, app_list)
         if routed_apps:
+            # Голос Discord в include идёт напрямую (диагностика 01.10.2026):
+            # звонки — это UDP, и через vless-ноду они не подключались (13
+            # попыток к 104.29.x:19299/19312 ушли на ноду, голос так и не
+            # поднялся — нода UDP не прокидывает). Текст/медиа Discord — TCP
+            # и по-прежнему через VPN; наружу уходит только голос. Правило
+            # добавляется только когда Discord реально выбран и обязательно
+            # ДО общего include-правила (в sing-box первое совпадение).
+            if (
+                app_mode == APP_MODE_INCLUDE
+                and any(a.lower() == "discord.exe" for a in routed_apps)
+            ):
+                rules.append({
+                    "action": "route",
+                    "process_name": ["Discord.exe"],
+                    "network": "udp",
+                    "outbound": "direct",
+                })
             rules.append({
                 "action": "route",
                 "process_name": routed_apps,
