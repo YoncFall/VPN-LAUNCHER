@@ -1256,6 +1256,22 @@ class TestUiTextFit:
                 f"радио «{r._text}»: {adv}px не влезает в {inner}px"
             )
 
+    def test_mode_segments_full_row(self, win):
+        """Сегменты «Всё, кроме списка»/«Только выбранные» - вся строка.
+
+        Заголовок секции вынесен на свою строку (2.1.3): сегменты делили
+        436px и выглядели узкими. Проверяем: полная ширина 18..574, гэп
+        между сегментами, без наезда на заголовок и на список ниже.
+        """
+        a, b = win.radio_excl, win.radio_vpnonly
+        assert a.x() == 18
+        assert b.x() + b.width() == 574
+        assert a.x() + a.width() <= b.x() - 4  # гэп между сегментами
+        assert a.y() == b.y()
+        assert win.lbl_appsec.y() < a.y()  # заголовок отдельной строкой
+        assert a.y() + a.height() <= win.frame_excl.y()  # список ниже
+        assert a.y() + a.height() <= win.picker_proc.y()
+
     def test_status_elides_long_text(self, win):
         """Длинный статус (имя .exe) обрезается с «…», а не вылезает."""
         from PySide6.QtGui import QFontMetrics

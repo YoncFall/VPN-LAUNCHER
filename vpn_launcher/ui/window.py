@@ -268,30 +268,32 @@ class MainWindow(QWidget):
         # 2.1.3: «(нужен админ)» (341px) не влезало в сегмент - текст и
         # ширины пересчитаны под оба состояния (выбранное = w-28)
         self.radio_tun = GameRadio("Весь трафик - TUN (админ)", True, card)
-        self.radio_tun.setGeometry(18, 371, 342, 36)
+        self.radio_tun.setGeometry(18, 371, 342, 32)
         self.radio_proxy = GameRadio("Системный прокси", False, card)
-        self.radio_proxy.setGeometry(366, 371, 208, 36)
+        self.radio_proxy.setGeometry(366, 371, 208, 32)
         self.radio_tun.toggled.connect(lambda: self._select_mode("tun"))
         self.radio_proxy.toggled.connect(lambda: self._select_mode("proxy"))
 
         div3 = Divider(card)
-        div3.setGeometry(18, 412, 556, 2)
+        div3.setGeometry(18, 407, 556, 2)
 
         # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) + режим работы списка (новое, 30.09.2026) ---
         # Справа в этой строке раньше висел статический хинт «игры, Steam и
         # античиты исключены автоматически» - он описывал только режим
         # exclude. Место отдано переключателю (тот же GameRadio, что и в
         # РЕЖИМ), а зависимый от режима текст переехал в lbl_apps_hint.
-        # Геометрия строки не изменилась: 18..574, высота 16, карточка цела.
-        # 2.1.3: сегменты пересчитаны - у выбранного внутренний прямоугольник
-        # уже на 12px (точка), тексты обязаны влезать в худший случай
+        # 2.1.3 (после правки): заголовок секции вынесен на отдельную
+        # строку, иначе сегменты делили 436px и выглядели узкими; теперь
+        # у каждого ~275px (внутри выбранного = w-28: 246/248 >= текст).
+        # Нижний блок (список/кнопки/подсказка) сдвинут на +8, карточка
+        # цела: подсказка 554..570, div4 на 574.
         self.lbl_appsec = _label(
-            card, "ИСКЛЮЧЕНИЯ", 18, 424, 116, 16, theme.TEXT_DIM, theme.f_caps()
+            card, "ИСКЛЮЧЕНИЯ", 18, 410, 556, 16, theme.TEXT_DIM, theme.f_caps()
         )
         self.radio_excl = GameRadio("Всё, кроме списка", True, card)
-        self.radio_excl.setGeometry(138, 424, 220, 16)
+        self.radio_excl.setGeometry(18, 430, 274, 18)
         self.radio_vpnonly = GameRadio("Только выбранные", False, card)
-        self.radio_vpnonly.setGeometry(364, 424, 210, 16)
+        self.radio_vpnonly.setGeometry(298, 430, 276, 18)
         self.radio_excl.toggled.connect(
             lambda: self._select_app_mode(APP_MODE_EXCLUDE)
         )
@@ -299,19 +301,19 @@ class MainWindow(QWidget):
             lambda: self._select_app_mode(APP_MODE_INCLUDE)
         )
         self.frame_excl = GameFrame(10, card)
-        self.frame_excl.setGeometry(18, 444, 260, 84)
+        self.frame_excl.setGeometry(18, 452, 260, 84)
         # список исключений: Pad=14 (New-GameListBox ... $false 14, VPN.ps1:193)
         self.list_excl = NeonList(ping=False, pad=14, parent=self.frame_excl)
         self.list_excl.setGeometry(3, 3, 260 - 6, 84 - 6)
         self.picker_proc = GamePicker("выбери процесс или впиши имя .exe", card)
-        self.picker_proc.setGeometry(288, 444, 286, 30)
+        self.picker_proc.setGeometry(288, 452, 286, 30)
 
         self.btn_add = GameButton("Добавить", "ghost", 8, card)
-        self.btn_add.setGeometry(288, 478, 286, 30)
+        self.btn_add.setGeometry(288, 486, 286, 30)
         self.btn_del = GameButton("Удалить", "ghost", 8, card)
-        self.btn_del.setGeometry(288, 512, 138, 30)
+        self.btn_del.setGeometry(288, 520, 138, 30)
         self.btn_clr = GameButton("Очистить", "ghost", 8, card)
-        self.btn_clr.setGeometry(426, 512, 148, 30)
+        self.btn_clr.setGeometry(426, 520, 148, 30)
         self.btn_add.clicked.connect(self._excl_add)
         self.btn_del.clicked.connect(self._excl_del)
         self.btn_clr.clicked.connect(self._excl_clr)
@@ -321,7 +323,7 @@ class MainWindow(QWidget):
         self.lbl_apps_hint = _label(
             card,
             "Список процессов обновляется при запуске",
-            18, 550, 556, 16, theme.TEXT_DIM, theme.f_sub(),
+            18, 554, 556, 16, theme.TEXT_DIM, theme.f_sub(),
         )
 
         div4 = Divider(card)
