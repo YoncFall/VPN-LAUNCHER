@@ -292,8 +292,10 @@ class TestAppModeSwitch:
         monkeypatch.setattr(
             "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
         )
+        ks_seen: list = []
         monkeypatch.setattr(
-            "vpn_launcher.ui.window.install_kill_switch", lambda addrs: True
+            "vpn_launcher.ui.window.install_kill_switch",
+            lambda addrs, **k: ks_seen.append((list(addrs), k)) or True,
         )
         win.radio_vpnonly.toggled.emit()
         win.list_excl.add_item("mygame.exe")
@@ -308,6 +310,9 @@ class TestAppModeSwitch:
         assert seen[0]["mode"] == "tun"
         assert seen[0]["apps"] == ["mygame.exe"]
         assert "ПОДКЛЮЧЕНО" in win.lbl_status.text()
+        # 02.10.2026: kill switch получает тот же список, что и маршрутизация
+        assert ks_seen and ks_seen[0][1]["app_mode"] == "include"
+        assert ks_seen[0][1]["app_names"] == ["mygame.exe"]
 
 
 # ---- пикер: браузеры в списке всегда (30.09.2026, по просьбе) ---------------
@@ -699,7 +704,7 @@ class TestConnect:
         )
         monkeypatch.setattr(
             "vpn_launcher.ui.window.install_kill_switch",
-            lambda addrs: ks_calls.append(addrs) or True,  # фильтры повесились
+            lambda addrs, **k: ks_calls.append(addrs) or True,  # фильтры повесились
         )
         win.radio_tun.set_checked(True)
         win.nodes = [{"display": "a", "proto": "vless", "tag": "tag1"}]
@@ -905,7 +910,8 @@ class TestConnect:
             "vpn_launcher.ui.window.start_sing_box", lambda cfg, root: FakeProc()
         )
         monkeypatch.setattr(
-            "vpn_launcher.ui.window.install_kill_switch", lambda addrs: False
+            "vpn_launcher.ui.window.install_kill_switch",
+            lambda addrs, **k: False,
         )
         stops: list = []
         removed: list = []

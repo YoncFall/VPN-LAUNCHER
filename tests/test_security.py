@@ -413,11 +413,171 @@ class TestBuildSpecs:
         assert len(self.SPECS) == 17
 
 
+class TestBuildSpecsIncludeMode:
+    """02.10.2026: include инвертирует kill switch - глобального блока нет.
+
+    Блокируются ТОЛЬКО выбранные образы: при падении движка они не утекают
+    на прямую, а все остальные приложения работают без ограничений.
+    """
+
+    PATHS = [r"C:\x\msedge.exe", r"C:\x\Discord.exe"]
+    SPECS = wfp_mod.build_specs(
+        r"C:\app\sing-box.exe", ["172.19.0.1/30"],
+        app_mode="include", app_paths=PATHS,
+    )
+    BLOCKS = [s for s in SPECS if s["action"] == wfp_mod.FWP_ACTION_BLOCK]
+
+    def test_no_unconditional_block(self):
+        assert self.BLOCKS, "блоки выбранных образов обязательны"
+        assert all(
+            s["conds"] and s["conds"][0]["kind"] == "appid" for s in self.BLOCKS
+        ), "в include нет глобального блока - только appid выбранных"
+
+    def test_block_selected_on_both_layers(self):
+        got = {(s["layer"], s["conds"][0]["value"]) for s in self.BLOCKS}
+        expected = {
+            (layer, path)
+            for path in self.PATHS
+            for layer in (wfp_mod.GUID_LAYER_V4, wfp_mod.GUID_LAYER_V6)
+        }
+        assert got == expected
+        assert all(s["weight"] == wfp_mod.WEIGHT_BLOCK for s in self.BLOCKS)
+
+    def test_engine_tun_lan_still_permit(self):
+        permits = [s for s in self.SPECS if s["action"] == wfp_mod.FWP_ACTION_PERMIT]
+        assert permits and all(
+            s["weight"] > wfp_mod.WEIGHT_BLOCK for s in permits
+        ), "разрешения обязаны перебивать блоки выбранных"
+        assert any(
+            s["conds"] and s["conds"][0]["kind"] == "appid"
+            and s["conds"][0]["value"] == r"C:\app\sing-box.exe"
+            for s in permits
+        ), "движок разрешён"
+        assert any(
+            s["conds"] and s["conds"][0]["field"] == wfp_mod.GUID_COND_LOCAL
+            for s in permits
+        ), "туннель разрешён"
+        assert any(
+            s["conds"] and s["conds"][0]["field"] == wfp_mod.GUID_COND_REMOTE
+            for s in permits
+        ), "LAN разрешён"
+
+    def test_empty_list_keeps_connection_open(self):
+        specs = wfp_mod.build_specs(
+            r"C:\app\sing-box.exe", ["172.19.0.1/30"], app_mode="include"
+        )
+        assert not [
+            s for s in specs if s["action"] == wfp_mod.FWP_ACTION_BLOCK
+        ], "пустой include = блокировать некого, все работают напрямую"
+
+
+class TestBuildSpecsExcludeAppPermits:
+    """exclude: permit образов «мимо VPN» перебивает глобальный блок."""
+
+    PATH = r"C:\games\cs2.exe"
+    SPECS = wfp_mod.build_specs(
+        r"C:\app\sing-box.exe", ["172.19.0.1/30"],
+        app_mode="exclude", app_paths=[PATH],
+    )
+
+    def test_unconditional_block_still_present(self):
+        blocks = [s for s in self.SPECS if s["action"] == wfp_mod.FWP_ACTION_BLOCK]
+        assert any(not s["conds"] for s in blocks), (
+            "классика: глобальный блок остаётся"
+        )
+
+    def test_appid_permits_outrank_block(self):
+        permits = [
+            s for s in self.SPECS
+            if s["action"] == wfp_mod.FWP_ACTION_PERMIT
+            and s["conds"] and s["conds"][0]["kind"] == "appid"
+            and s["conds"][0]["value"] == self.PATH
+        ]
+        assert {s["layer"] for s in permits} == {
+            wfp_mod.GUID_LAYER_V4,
+            wfp_mod.GUID_LAYER_V6,
+        }
+        assert all(s["weight"] == wfp_mod.WEIGHT_PERMIT for s in permits)
+        blocks = [s for s in self.SPECS if s["action"] == wfp_mod.FWP_ACTION_BLOCK]
+        assert all(s["weight"] < wfp_mod.WEIGHT_PERMIT for s in blocks), (
+            "permit образа должен перебивать глобальный блок по весу"
+        )
+
+
+class TestResolveImagePaths:
+    """Имена «Discord.exe» -> пути образов для appid-условий WFP."""
+
+    @staticmethod
+    def _flat_sources(monkeypatch, running=(), roots=(), which=None):
+        monkeypatch.setattr(wfp_mod, "_running_images", lambda names: list(running))
+        monkeypatch.setattr(wfp_mod, "_app_paths_candidates", lambda name: [])
+        monkeypatch.setattr(wfp_mod, "_root_candidates", lambda name: list(roots))
+        monkeypatch.setattr(wfp_mod.shutil, "which", lambda name: which)
+
+    def test_abs_existing_path(self, monkeypatch, tmp_path):
+        self._flat_sources(monkeypatch)
+        exe = tmp_path / "game.exe"
+        exe.write_text("x", encoding="utf-8")
+        assert wfp_mod.resolve_image_paths([str(exe)]) == [str(exe)]
+
+    def test_missing_name_skipped_and_logged(self, monkeypatch):
+        self._flat_sources(monkeypatch)
+        logs: list = []
+        monkeypatch.setattr(wfp_mod, "write_log", logs.append)
+        assert wfp_mod.resolve_image_paths(["ghost.exe"]) == []
+        assert logs and "ghost.exe" in logs[0]
+
+    def test_sources_deduped(self, monkeypatch, tmp_path):
+        exe = tmp_path / "Discord.exe"
+        exe.write_text("x", encoding="utf-8")
+        self._flat_sources(
+            monkeypatch, running=[str(exe)], roots=[str(exe)], which=str(exe)
+        )
+        assert wfp_mod.resolve_image_paths(["Discord.exe"]) == [str(exe)]
+
+    def test_empty_list_touches_no_sources(self, monkeypatch):
+        monkeypatch.setattr(
+            wfp_mod,
+            "_running_images",
+            lambda names: (_ for _ in ()).throw(AssertionError("не вызывается")),
+        )
+        assert wfp_mod.resolve_image_paths([]) == []
+
+
 class TestInstallLifecycle:
     @pytest.fixture(autouse=True)
     def _clean_session(self, monkeypatch):
         """Каждый тест - с чистым состоянием сессии WFP."""
         monkeypatch.setattr(wfp_mod, "_ENGINE", None)
+
+    def test_install_passes_mode_and_resolved_paths(self, monkeypatch):
+        """02.10.2026: install пробрасывает app_mode и резолвит образы."""
+        seen: dict = {}
+        monkeypatch.setattr(wfp_mod, "_open_engine", lambda: "H1")
+        monkeypatch.setattr(wfp_mod, "_wipe_our_filters", lambda h: 0)
+        monkeypatch.setattr(wfp_mod, "_add_sublayer", lambda h: None)
+        monkeypatch.setattr(
+            wfp_mod,
+            "resolve_image_paths",
+            lambda names: [r"C:\x\a.exe"] if names else [],
+        )
+        monkeypatch.setattr(
+            wfp_mod, "build_specs", lambda exe, addrs, **k: seen.update(k) or []
+        )
+        monkeypatch.setattr(wfp_mod, "_add_filters", lambda h, specs: len(specs))
+        monkeypatch.setattr(wfp_mod, "write_log", lambda m: None)
+        monkeypatch.setattr(wfp_mod._fwp, "FwpmEngineClose0", lambda h: 0)
+        try:
+            ok = wfp_mod.install_kill_switch(
+                ["172.19.0.1/30"],
+                app_mode="include",
+                app_names=["a.exe"],
+            )
+        finally:
+            wfp_mod.remove_kill_switch()
+        assert ok is True
+        assert seen["app_mode"] == "include"
+        assert seen["app_paths"] == [r"C:\x\a.exe"]
 
     def test_empty_addrs_refused_without_opening_wfp(self, monkeypatch):
         logs: list = []

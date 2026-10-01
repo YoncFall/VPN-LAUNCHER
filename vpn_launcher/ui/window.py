@@ -42,6 +42,7 @@ from vpn_launcher.core.config import (
     GAME_SAFE_PROCESSES,
     new_sing_box_config,
     purge_config_file,
+    routed_app_processes,
     test_sing_box_config,
     write_config,
 )
@@ -725,7 +726,15 @@ class MainWindow(QWidget):
             self._sb_cfg_data = _read_cfg_data(cfg)
             purge_config_file(cfg)
             if mode == "tun":
-                if not install_kill_switch(_tun_addresses(self._sb_cfg_data)):
+                # kill switch вешаем С тем же списком процессов, что и в
+                # маршрутизации (02.10.2026): include - блок только выбранных
+                # образов (остальные работают напрямую), exclude - глобальный
+                # блок с разрешением игр/исключений (см. win/wfp.py)
+                if not install_kill_switch(
+                    _tun_addresses(self._sb_cfg_data),
+                    app_mode=app_mode,
+                    app_names=routed_app_processes(app_mode, apps),
+                ):
                     # S6: фильтры не повесились (GPO/антивирус/права WFP) -
                     # раньше подключение шло молча, только с записью в лог.
                     # Теперь честно спрашиваем: «Нет» = отмена с остановкой
@@ -852,12 +861,23 @@ class MainWindow(QWidget):
                 theme.DANGER,
             )
             if self.state.get("mode") == "tun":
-                # kill switch намеренно НЕ снимаем (fail-closed): туннель
-                # мёртв - трафик блокирован, вместо утечки «в обход VPN»
-                write_log(
-                    "kill switch остаётся активным: внешний трафик блокирован "
-                    "до «Отключить» или закрытия окна"
-                )
+                # kill switch намеренно НЕ снимаем (fail-closed). В include
+                # глобального блока нет: закрыты только выбранные образы
+                # (не утекают), остальные работают напрямую - 02.10.2026
+                if (
+                    self.state.get("appMode") == APP_MODE_INCLUDE
+                    and self.state.get("appList")
+                ):
+                    write_log(
+                        "kill switch остаётся активным: выбранные приложения "
+                        "отключены (не утекают на прямую), остальные работают "
+                        "напрямую - до «Отключить» или закрытия окна"
+                    )
+                else:
+                    write_log(
+                        "kill switch остаётся активным: внешний трафик блокирован "
+                        "до «Отключить» или закрытия окна"
+                    )
             self.led_status.light_off()  # обрыв - лампочки гаснут плавно
             self.titlebar.led.light_off()
             return

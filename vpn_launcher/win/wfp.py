@@ -1,16 +1,32 @@
 # -*- coding: utf-8 -*-
-"""Kill switch (TUN): весь внешний трафик - строго через туннель, иначе стоп.
+"""Kill switch (TUN): управление прямым выходом по режиму списка.
 
-Принцип (01.10.2026, «фулл-защита»): пока подключены, в WFP вешаются свои
-фильтры на слой авторизации исходящих соединений (ALE_AUTH_CONNECT V4/V6):
+Принцип (02.10.2026): пока подключены, в WFP вешаются свои фильтры на слой
+авторизации исходящих соединений (ALE_AUTH_CONNECT V4/V6). Состав зависит
+от app_mode и списка процессов (core.config.routed_app_processes - тот же
+список, что в правилах маршрутизации sing-box):
 
-    РАЗРЕШИТЬ  - трафик с адресов нашего TUN-адаптера (ушёл в туннель);
-    РАЗРЕШИТЬ  - сам sing-box.exe (его соединения с нодами);
-    РАЗРЕШИТЬ  - LAN/петля/мультикаст (роутер и сеть живы даже при сбое);
-    БЛОКИРОВАТЬ - всё остальное.
+    exclude (классика):
+        РАЗРЕШИТЬ  - трафик с адресов нашего TUN-адаптера (ушёл в туннель);
+        РАЗРЕШИТЬ  - сам sing-box.exe (его соединения с нодами);
+        РАЗРЕШИТЬ  - LAN/петля/мультикаст (роутер и сеть живы при сбое);
+        РАЗРЕШИТЬ  - образы «мимо VPN» (игры + выбор пользователя);
+        БЛОКИРОВАТЬ - всё остальное.
+      Если движок умер - не-разрешённые соединения блокируются вместо
+      утечки «в обход VPN» (fail-closed), а игры/исключения живут.
 
-Если движок умер и туннель рухнул, адреса TUN исчезают -> весь внешний
-трафик (кроме LAN) блокируется ВМЕСТО утечки «в обход VPN». Это fail-closed.
+    include (инверсия):
+        РАЗРЕШИТЬ  - те же TUN / движок / LAN;
+        БЛОКИРОВАТЬ - ТОЛЬКО выбранные образы (V4 и V6);
+        глобального блока НЕТ.
+      Если движок умер - выбранные приложения не утекают на прямую
+      (fail-closed для них), а все остальные продолжают работать
+      напрямую без ограничений - ровно обещание режима include.
+
+Веса permit > block (WEIGHT_PERMIT > WEIGHT_BLOCK) и максимальный
+саблэйл гарантируют: разрешение туннеля/LAN/движка всегда сильнее
+блока конкретного образа, а permit образа (exclude) сильнее
+безусловного блока.
 
 Почему не Windows Firewall (netsh / New-NetFirewallRule): эмпирически
 01.10.2026 на этой машине (а) netsh вообще не добавляет block-правила
@@ -29,10 +45,13 @@ sublayer'ом работают детерминированно при любо�
 очистки остатков прошлых запусков (оба шага - те же ключи, только наши).
 
 API:
-    install_kill_switch(tun_addrs, engine_exe=None) -> bool  (False + лог)
+    install_kill_switch(tun_addrs, engine_exe=None, *, app_mode="exclude",
+                        app_names=()) -> bool       (False + лог)
     remove_kill_switch()                                     (идемпотентно)
     is_active() -> bool
-    build_specs(engine_exe, tun_addrs) -> list[dict]         (чистая, для тестов)
+    build_specs(engine_exe, tun_addrs, *, app_mode="exclude",
+                app_paths=()) -> list[dict]        (чистая, для тестов)
+    resolve_image_paths(names) -> list[str]        (имена -> образы WFP)
 
 Самопроверка (нужны права администратора):
     python -m vpn_launcher.win.wfp --selftest
@@ -41,12 +60,16 @@ from __future__ import annotations
 
 import ctypes
 import ipaddress
+import os
+import shutil
 import socket
 import sys
 import uuid
 from ctypes import wintypes
+from pathlib import Path
 from typing import Any, Sequence
 
+from vpn_launcher.core.config import APP_MODE_EXCLUDE, APP_MODE_INCLUDE
 from vpn_launcher.core.log import write_log
 from vpn_launcher.paths import SING_BOX
 
@@ -261,11 +284,23 @@ def _cidr_v4(cidr: str) -> tuple[int, int]:
 
 
 # ---- чистый план фильтров (тестируется без админа) -------------------------
-def build_specs(engine_exe: str, tun_addrs: Sequence[str]) -> list[dict[str, Any]]:
+def build_specs(
+    engine_exe: str,
+    tun_addrs: Sequence[str],
+    *,
+    app_mode: str = APP_MODE_EXCLUDE,
+    app_paths: Sequence[str] = (),
+) -> list[dict[str, Any]]:
     """План фильтров kill switch.
 
     dict: {layer: GUID-строка, action, weight, conds: [...]};
     cond: {"field": GUID, "kind": "appid"|"addr", "value": путь|CIDR}.
+
+    app_mode + app_paths - семантика режима (докстринг модуля):
+      exclude - глобальный блок + permit образов «мимо VPN» (app_paths);
+      include - глобального блока нет, app_paths блокируются по appid;
+      пустой app_paths в include - блокировать некого (внешний вид не
+      меняется: остаются только разрешения, всё работает напрямую).
     """
     specs: list[dict[str, Any]] = []
     # 1. всё, что пришло с адресов TUN (идёт в туннель) - разрешаем
@@ -307,12 +342,190 @@ def build_specs(engine_exe: str, tun_addrs: Sequence[str]) -> list[dict[str, Any
                 "conds": [{"field": GUID_COND_REMOTE, "kind": "addr", "value": cidr}],
             }
         )
-    # 4. блок всего остального (без условий - матчится любое соединение)
-    for layer in (GUID_LAYER_V4, GUID_LAYER_V6):
-        specs.append(
-            {"layer": layer, "action": FWP_ACTION_BLOCK, "weight": WEIGHT_BLOCK, "conds": []}
-        )
+    # 4. семантика режима (02.10.2026): управляем прямым выходом ТОЧЕЧНО
+    if app_mode == APP_MODE_INCLUDE:
+        # инверсия: глобального блока нет; блокируем только выбранные
+        # образы - при смерти движка они не утекают на прямую, а весь
+        # прочий трафик (не выбранные процессы) продолжает работать.
+        # Разрешения TUN/LAN/движка (вес permit выше) спасают их соединения
+        # с туннелем, пока движок жив.
+        for path in app_paths:
+            for layer in (GUID_LAYER_V4, GUID_LAYER_V6):
+                specs.append(
+                    {
+                        "layer": layer,
+                        "action": FWP_ACTION_BLOCK,
+                        "weight": WEIGHT_BLOCK,
+                        "conds": [
+                            {"field": GUID_COND_APP_ID, "kind": "appid", "value": str(path)}
+                        ],
+                    }
+                )
+    else:
+        # классика (exclude): permit образов «мимо VPN» перебивает
+        # безусловный блок по весу - эти процессы живут и после смерти
+        # движка, всё остальное остаётся fail-closed.
+        for path in app_paths:
+            for layer in (GUID_LAYER_V4, GUID_LAYER_V6):
+                specs.append(
+                    {
+                        "layer": layer,
+                        "action": FWP_ACTION_PERMIT,
+                        "weight": WEIGHT_PERMIT,
+                        "conds": [
+                            {"field": GUID_COND_APP_ID, "kind": "appid", "value": str(path)}
+                        ],
+                    }
+                )
+        # 5. блок всего остального (без условий - матчится любое соединение)
+        for layer in (GUID_LAYER_V4, GUID_LAYER_V6):
+            specs.append(
+                {"layer": layer, "action": FWP_ACTION_BLOCK, "weight": WEIGHT_BLOCK, "conds": []}
+            )
     return specs
+
+
+# ---- разрешение имён процессов в образы ------------------------------------
+# WFP матчит только по полному пути образа (appid), а список пользователя -
+# имена вида «Discord.exe». Кандидаты собираются из нескольких источников,
+# отбор - только существующие файлы (resolve_image_paths).
+
+def _app_paths_candidates(name: str) -> list[str]:
+    """Реестр App Paths (HKCU/HKLM, 64/32-битный вид) -> путь образа."""
+    out: list[str] = []
+    try:
+        import winreg
+    except ImportError:  # не Windows - только в тестах
+        return out
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\App Paths\\" + name
+    views = (
+        (winreg.HKEY_CURRENT_USER, 0),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_32KEY),
+    )
+    for hive, view in views:
+        try:
+            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | view) as k:
+                val = None
+                for vname in (None, ""):  # значение по умолчанию = путь
+                    try:
+                        val, _ = winreg.QueryValueEx(k, vname)
+                        break
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+        if isinstance(val, str) and val.strip():
+            out.append(val)
+    return out
+
+
+def _running_images(names: Sequence[str]) -> list[str]:
+    """Пути запущенных образов по именам (один вызов PowerShell на все)."""
+    stems = sorted({Path(str(n)).stem for n in names if str(n).strip()})
+    stems = [s for s in stems if s]
+    if not stems:
+        return []
+    try:
+        import subprocess
+
+        q = ",".join("'" + s.replace("'", "") + "'" for s in stems)
+        out = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                f"Get-Process -Name {q} -ErrorAction SilentlyContinue"
+                " | Select-Object -ExpandProperty Path -ErrorAction SilentlyContinue",
+            ],
+            capture_output=True, timeout=15, creationflags=0x08000000,
+        )
+        return [
+            ln.strip()
+            for ln in out.stdout.decode("utf-8", "replace").splitlines()
+            if ln.strip()
+        ]
+    except Exception:  # noqa: BLE001 - источник best-effort
+        return []
+
+
+def _root_candidates(name: str) -> list[str]:
+    """Типовые корни установки (обновляемые приложения вроде Discord)."""
+    out: list[str] = []
+    p = Path(name)
+    stem = p.stem
+    if not stem or p.is_absolute():
+        return out
+    try:
+        import os
+
+        la = os.environ.get("LOCALAPPDATA") or ""
+        pf = os.environ.get("ProgramFiles") or ""
+        pf86 = os.environ.get("ProgramFiles(x86)") or ""
+    except Exception:  # noqa: BLE001
+        return out
+    if la:
+        base = Path(la) / stem
+        if base.is_dir():
+            # Discord: %LOCALAPPDATA%\Discord\app-*\Discord.exe (версии)
+            out.extend(str(x) for x in sorted(base.glob(f"app-*/{name}")))
+        cand = base / name
+        if cand.is_file():
+            out.append(str(cand))
+    for root in (pf, pf86):
+        if not root:
+            continue
+        for cand in (Path(root) / stem / name, Path(root) / name):
+            if cand.is_file():
+                out.append(str(cand))
+    return out
+
+
+def resolve_image_paths(names: Sequence[str]) -> list[str]:
+    """Имена процессов -> существующие пути образов (условия appid WFP).
+
+    Источники: абсолютный путь (пользователь вручную), запущенный процесс,
+    реестр App Paths, PATH, типовые корни. Ненайденные имена логируются и
+    пропускаются: пока движок жив, нужные процессы всё равно идут в TUN
+    (маршруты /1), а без образа фильтр просто не создатся - честнее, чем
+    условие на несуществующий путь.
+    """
+    cleaned = [str(n).strip() for n in names if str(n).strip()]
+    if not cleaned:
+        return []
+    running = _running_images(cleaned)
+    out: list[str] = []
+    missing: list[str] = []
+    for name in cleaned:
+        cands: list[str] = []
+        p = Path(name)
+        if p.is_absolute():
+            cands.append(name)  # путь руками - ищем только его
+        else:
+            key = name.casefold()
+            cands += [r for r in running if Path(r).name.casefold() == key]
+            cands += _app_paths_candidates(name)
+            w = shutil.which(name)
+            if w:
+                cands.append(w)
+            cands += _root_candidates(name)
+        keep: list[str] = []
+        for c in cands:
+            try:
+                c2 = os.path.expandvars(c).strip('"')
+                if Path(c2).is_file() and c2 not in keep:
+                    keep.append(c2)
+            except (OSError, ValueError):
+                continue
+        if keep:
+            out.extend(keep)
+        else:
+            missing.append(name)
+    if missing:
+        write_log("kill switch: образы не найдены: " + ", ".join(missing))
+    final: list[str] = []
+    for x in out:
+        if x not in final:
+            final.append(x)
+    return final
 
 
 # ---- применение -------------------------------------------------------------
@@ -476,12 +689,21 @@ def _wipe_our_filters(handle: Any) -> int:
 
 
 def install_kill_switch(
-    tun_addrs: Sequence[str], engine_exe: str | None = None
+    tun_addrs: Sequence[str],
+    engine_exe: str | None = None,
+    *,
+    app_mode: str = APP_MODE_EXCLUDE,
+    app_names: Sequence[str] = (),
 ) -> bool:
     """Повесить фильтры (True) или сообщить False + строку в лог.
 
     Идемпотентно: уже активен -> True. Нет адресов TUN -> False (без
     разрешения на туннель kill switch сломал бы само подключение).
+
+    app_mode/app_names - та же семантика, что в маршрутизации sing-box
+    (core.config.routed_app_processes, см. докстринг модуля): exclude -
+    глобальный блок + разрешение образов «мимо VPN»; include - глобального
+    блока нет, блокируются только выбранные образы.
     """
     global _ENGINE
     if _ENGINE is not None:
@@ -500,13 +722,24 @@ def install_kill_switch(
         if stale:
             write_log(f"kill switch: удалено старых фильтров: {stale}")
         _add_sublayer(handle)
-        added = _add_filters(handle, build_specs(exe, list(tun_addrs)))
+        app_paths = resolve_image_paths(app_names)
+        added = _add_filters(
+            handle,
+            build_specs(
+                exe, list(tun_addrs), app_mode=app_mode, app_paths=app_paths
+            ),
+        )
     except OSError as ex:
         write_log(f"kill switch: ошибка установки: {ex}")
         _fwp.FwpmEngineClose0(handle)  # динамическая сессия: close = откат своих
         return False
     _ENGINE = handle
-    write_log(f"kill switch ON: {added} фильтров ({', '.join(tun_addrs)})")
+    extra = ""
+    if app_mode == APP_MODE_INCLUDE:
+        extra = f", include-block образов: {len(app_paths)}"
+    elif app_paths:
+        extra = f", мимо блока: {len(app_paths)} образ(ов)"
+    write_log(f"kill switch ON: {added} фильтров ({', '.join(tun_addrs)}){extra}")
     return True
 
 
@@ -599,31 +832,59 @@ def _selftest() -> int:
     gw = _default_gateway()
     print(f"phys ip: {phys}, gateway: {gw}", flush=True)
 
+    # Цель проб наружу - TCP 8.8.8.8:53, а НЕ :443. Диагноз 02.10.2026:
+    # порт 80/443 перехватывает WinDivert (zapret/winws), и после изменения
+    # набора WFP-фильтров он кратковременно (~10 с) проваливал пробы :443 -
+    # ложные таймауты искажали самопроверку. Порт 53 вне --wf-tcp winws,
+    # на нём permit/block отрабатывают безупречно (wfp-diag2.out).
+    PEXT = ("8.8.8.8", 53)
+
     # T1: разрешение по appid (движок = наш python; тун-адрес фиктивный)
     remove_kill_switch()
     ok = install_kill_switch(["203.0.113.1/32"], engine_exe=me)
     check("T1 install(appid=python)", "True", str(ok))
-    check("T1 проба наружу", "OK", _probe("1.1.1.1", 443))
+    check("T1 проба наружу", "OK", _probe(*PEXT))
     remove_kill_switch()
 
     # T2: разрешение по локальному адресу TUN (физ. IP подменён за адрес туннеля)
     ok = install_kill_switch([phys + "/32"], engine_exe=str(SING_BOX))
     check("T2 install(local=tun)", "True", str(ok))
-    check("T2 проба наружу", "OK", _probe("1.1.1.1", 443))
+    check("T2 проба наружу", "OK", _probe(*PEXT))
     remove_kill_switch()
 
     # T3+T4: блок без совпадений, затем LAN-разрешение в той же сессии
     ok = install_kill_switch(["172.19.0.1/32"], engine_exe=str(SING_BOX))
     check("T3 install(block)", "True", str(ok))
-    check("T3 проба наружу (должен БЛОК)", "FAIL", _probe("1.1.1.1", 443).split("(")[0])
+    check("T3 проба наружу (должен БЛОК)", "FAIL", _probe(*PEXT).split("(")[0])
     if gw:
         check("T4 проба LAN (gw:53)", "OK", _probe(gw, 53))
     else:
         print("  T4 пропущена: шлюз не найден", flush=True)
     remove_kill_switch()
 
+    # T6: include - глобального блока нет, блокируется ТОЛЬКО выбранный
+    # образ (свой процесс = me, движок = sing-box, чтобы permit не перекрыл)
+    ok = install_kill_switch(
+        ["172.19.0.1/32"], engine_exe=str(SING_BOX),
+        app_mode="include", app_names=[me],
+    )
+    check("T6 install(include block me)", "True", str(ok))
+    check("T6 проба наружу (должен БЛОК)", "FAIL", _probe(*PEXT).split("(")[0])
+    if gw:
+        check("T6 проба LAN (не должна блок)", "OK", _probe(gw, 53))
+    remove_kill_switch()
+
+    # T7: exclude - permit образа «мимо VPN» перебивает глобальный блок
+    ok = install_kill_switch(
+        ["172.19.0.1/32"], engine_exe=str(SING_BOX),
+        app_mode="exclude", app_names=[me],
+    )
+    check("T7 install(exclude permit me)", "True", str(ok))
+    check("T7 проба наружу (permit)", "OK", _probe(*PEXT))
+    remove_kill_switch()
+
     # T5: снятие - сеть свободна
-    check("T5 проба после снятия", "OK", _probe("1.1.1.1", 443))
+    check("T5 проба после снятия", "OK", _probe(*PEXT))
 
     failed = [r for r in results if r[1] != r[2]]
     print(("SELFTEST: " + ("FAIL" if failed else "PASS")) + f" ({len(results) - len(failed)}/{len(results)})", flush=True)

@@ -333,3 +333,19 @@ class TestCheck:
     def test_missing_engine_raises_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             cfg.test_sing_box_config(tmp_path / "x.json", sing_box=tmp_path / "nope.exe")
+
+
+def test_routed_app_processes_matches_rule_list():
+    """routed_app_processes - тот же список, что и в правиле sing-box (02.10.2026).
+
+    Kill switch обязан управлять ровно теми процессами, что перечислены в
+    маршрутизации: include блокирует их (без глобального блока), exclude
+    разрешает мимо глобального блока.
+    """
+    assert cfg.routed_app_processes(APP_MODE_INCLUDE, ["a.exe", "a.exe"]) == [
+        "a.exe"
+    ]
+    assert cfg.routed_app_processes(APP_MODE_INCLUDE, []) == []
+    assert cfg.routed_app_processes(APP_MODE_EXCLUDE, ["a.exe"]) == (
+        list(cfg.GAME_SAFE_PROCESSES) + ["a.exe"]
+    )
