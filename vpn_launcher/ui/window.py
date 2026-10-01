@@ -255,27 +255,29 @@ class MainWindow(QWidget):
         _label(card, "СЕРВЕР", 81, 136, 300, 14, theme.TEXT_DIM, theme.f_caps())
         _label(card, "ПИНГ", 480, 136, 81, 14, theme.TEXT_DIM, theme.f_caps(), "right")
         self.frame_servers = GameFrame(10, card)
-        self.frame_servers.setGeometry(18, 152, 556, 178)
+        # 2.1.3: 178 -> 164 - 14px ушли вниз, в сегменты режима списка
+        # (h18 читалось полоской); строка 28px: 5 полных + частичная
+        self.frame_servers.setGeometry(18, 152, 556, 164)
         # список серверов: пинг-колонки, как New-GameListBox -Ping (VPN.ps1:170)
         self.list_servers = NeonList(ping=True, parent=self.frame_servers)
-        self.list_servers.setGeometry(3, 3, 556 - 6, 178 - 6)
+        self.list_servers.setGeometry(3, 3, 556 - 6, 164 - 6)
 
         div2 = Divider(card)
-        div2.setGeometry(18, 340, 556, 2)
+        div2.setGeometry(18, 326, 556, 2)
 
         # --- РЕЖИМ (VPN.ps1:177-185) ---
-        _label(card, "РЕЖИМ", 18, 352, 200, 16, theme.TEXT_DIM, theme.f_caps())
+        _label(card, "РЕЖИМ", 18, 338, 200, 16, theme.TEXT_DIM, theme.f_caps())
         # 2.1.3: «(нужен админ)» (341px) не влезало в сегмент - текст и
         # ширины пересчитаны под оба состояния (выбранное = w-28)
         self.radio_tun = GameRadio("Весь трафик - TUN (админ)", True, card)
-        self.radio_tun.setGeometry(18, 371, 342, 32)
+        self.radio_tun.setGeometry(18, 357, 342, 32)
         self.radio_proxy = GameRadio("Системный прокси", False, card)
-        self.radio_proxy.setGeometry(366, 371, 208, 32)
+        self.radio_proxy.setGeometry(366, 357, 208, 32)
         self.radio_tun.toggled.connect(lambda: self._select_mode("tun"))
         self.radio_proxy.toggled.connect(lambda: self._select_mode("proxy"))
 
         div3 = Divider(card)
-        div3.setGeometry(18, 407, 556, 2)
+        div3.setGeometry(18, 393, 556, 2)
 
         # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) + режим работы списка (новое, 30.09.2026) ---
         # Справа в этой строке раньше висел статический хинт «игры, Steam и
@@ -285,15 +287,16 @@ class MainWindow(QWidget):
         # 2.1.3 (после правки): заголовок секции вынесен на отдельную
         # строку, иначе сегменты делили 436px и выглядели узкими; теперь
         # у каждого ~275px (внутри выбранного = w-28: 246/248 >= текст).
-        # Нижний блок (список/кнопки/подсказка) сдвинут на +8, карточка
-        # цела: подсказка 554..570, div4 на 574.
+        # Высота сегментов 32 - как в РЕЖИМ (h18 выглядела полоской по
+        # просьбе 01.10); вертикаль взята у списка серверов (см. выше).
+        # Нижний блок без изменений: подсказка 554..570, div4 на 574.
         self.lbl_appsec = _label(
-            card, "ИСКЛЮЧЕНИЯ", 18, 410, 556, 16, theme.TEXT_DIM, theme.f_caps()
+            card, "ИСКЛЮЧЕНИЯ", 18, 396, 556, 16, theme.TEXT_DIM, theme.f_caps()
         )
         self.radio_excl = GameRadio("Всё, кроме списка", True, card)
-        self.radio_excl.setGeometry(18, 430, 274, 18)
+        self.radio_excl.setGeometry(18, 416, 274, 32)
         self.radio_vpnonly = GameRadio("Только выбранные", False, card)
-        self.radio_vpnonly.setGeometry(298, 430, 276, 18)
+        self.radio_vpnonly.setGeometry(298, 416, 276, 32)
         self.radio_excl.toggled.connect(
             lambda: self._select_app_mode(APP_MODE_EXCLUDE)
         )

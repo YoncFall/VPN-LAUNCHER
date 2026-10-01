@@ -1268,6 +1268,9 @@ class TestUiTextFit:
         assert b.x() + b.width() == 574
         assert a.x() + a.width() <= b.x() - 4  # гэп между сегментами
         assert a.y() == b.y()
+        # высота - как в РЕЖИМ, не «полоска» (жалоба 01.10)
+        assert a.height() >= 28
+        assert a.height() == win.radio_tun.height()
         assert win.lbl_appsec.y() < a.y()  # заголовок отдельной строкой
         assert a.y() + a.height() <= win.frame_excl.y()  # список ниже
         assert a.y() + a.height() <= win.picker_proc.y()
