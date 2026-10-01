@@ -36,8 +36,16 @@ QLineEdit:focus {{ border-color: #00C8F0; }}
 
 
 class GameField(QLineEdit):
-    def __init__(self, text: str = "", placeholder: str = "", parent=None) -> None:
+    def __init__(
+        self,
+        text: str = "",
+        placeholder: str = "",
+        parent=None,
+        *,
+        secret: bool = False,
+    ) -> None:
         super().__init__(text, parent)
+        self._secret = secret
         self.setFont(theme.f_body())
         self.setStyleSheet(_qss())
         if placeholder:
@@ -45,3 +53,19 @@ class GameField(QLineEdit):
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.PlaceholderText, theme.PLACEHOLDER)
         self.setPalette(pal)
+        if secret:
+            # 2.1.5 (просьба 01.10): содержимое скрыто, пока поле не в
+            # фокусе. Echo-режим меняется только на отображении - сам
+            # .text() всегда настоящий, state/connect читают его как раньше.
+            self.setEchoMode(QLineEdit.EchoMode.Password)
+            self.setToolTip("Скрыто - нажмите, чтобы показать и изменить")
+
+    def focusInEvent(self, e) -> None:  # noqa: N802
+        super().focusInEvent(e)
+        if self._secret:
+            self.setEchoMode(QLineEdit.EchoMode.Normal)
+
+    def focusOutEvent(self, e) -> None:  # noqa: N802
+        super().focusOutEvent(e)
+        if self._secret:
+            self.setEchoMode(QLineEdit.EchoMode.Password)

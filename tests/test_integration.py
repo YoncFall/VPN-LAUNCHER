@@ -1370,3 +1370,45 @@ class TestUiTextFit:
         assert win.lbl_egress.text() == "Внешний IP: 5.136.57.28"
         win._on_egress_failed("timeout")
         assert win.lbl_egress.text() == "Внешний IP недоступен"
+
+
+# ---- 2.1.5: поле подписки скрыто вне фокуса (просьба 01.10.2026) -------------
+# Echo-режим меняется только на отображении: .text() всегда настоящий,
+# state/connect читают его без изменений (как маска на Android v2.0.1).
+
+
+class TestSecretSubField:
+    def test_masked_until_focused(self, win):
+        """Вне фокуса - точки; клик/Tab - URL виден и редактируется."""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QFocusEvent
+        from PySide6.QtWidgets import QLineEdit
+
+        # при открытии окна (до любого фокуса) содержимое скрыто
+        assert win.field_sub.echoMode() == QLineEdit.EchoMode.Password
+        win.field_sub.setText("https://sub.example/x")
+        assert win.field_sub.text() == "https://sub.example/x"
+
+        # фокус пришёл - показываем
+        QApplication.sendEvent(win.field_sub, QFocusEvent(QEvent.Type.FocusIn))
+        assert win.field_sub.echoMode() == QLineEdit.EchoMode.Normal
+        assert win.field_sub.text() == "https://sub.example/x"
+
+        # фокус ушёл - снова скрыто, текст цел
+        QApplication.sendEvent(win.field_sub, QFocusEvent(QEvent.Type.FocusOut))
+        assert win.field_sub.echoMode() == QLineEdit.EchoMode.Password
+        assert win.field_sub.text() == "https://sub.example/x"
+
+    def test_plain_field_not_masked(self, qapp, win):
+        """GameField без secret= не маскируется ни при каком фокусе."""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QFocusEvent
+        from PySide6.QtWidgets import QLineEdit
+
+        from vpn_launcher.ui.widgets.field import GameField
+
+        plain = GameField("text", "", win)
+        assert plain.echoMode() == QLineEdit.EchoMode.Normal
+        plain.focusInEvent(QFocusEvent(QEvent.Type.FocusIn))
+        plain.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut))
+        assert plain.echoMode() == QLineEdit.EchoMode.Normal

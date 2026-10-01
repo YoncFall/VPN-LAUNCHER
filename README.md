@@ -3,7 +3,7 @@
 Переписка [VPN LAUNCHER BY @YoncFALL 1.0.6](https://github.com/YoncFall/VPN-LAUNCHER/tree/ps-1.0.6)
 на Python + PySide6. Старая PowerShell-версия сохранена в ветке `ps-1.0.6`
 и продолжает поддерживаться; эта ветка (`main`) — Python-версия, релиз
-**[v2.1.4](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
+**[v2.1.5](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
 (`VPN-LAUNCHER-Setup.exe` — установщик с удалалкой, `VPN-LAUNCHER.zip` — portable).
 
 ## Статус: этапы 0–7 завершены — Windows-версия готова к публикации
@@ -234,7 +234,11 @@ golden-файлам; `sing-box.exe`, `Setup.cs` и `install.bat` самой 1.0.
   статус «Отменено - подключение не выполнено» и лог
   `elevation cancelled by user`; прочие коды ошибок — «Не удалось получить
   права администратора». Пустой список в include-режиме как спрашивал до UAC,
-  так и спрашивает.
+  так и спрашивает;
+- поле подписки маскируется (по просьбе, 01.10.2026): пока поле не в фокусе —
+  точки (echo Password), по клику/Tab — настоящий URL и редактирование;
+  текст в виджете всегда полный, `state`/подключение читают его как раньше.
+  Как маска на Android (v2.0.1). В 1.0.6 ссылка была видна всегда.
 
 Список процессов (30.09.2026, новая функция — в 1.0.6 такого нет):
 
@@ -450,5 +454,5 @@ dev-окну. Установщик прогнан вживую: установк
 без остатка (папка/ярлыки/реестр чисты).
 
 **Windows-версия готова к публикации**: артефакты —
-`dist\VPN-LAUNCHER-2.1.4-Setup.exe` (одиночный установщик+удалалка) и
-`dist\VPN-LAUNCHER-2.1.4.zip` (portable с лицензиями).
+`dist\VPN-LAUNCHER-2.1.5-Setup.exe` (одиночный установщик+удалалка) и
+`dist\VPN-LAUNCHER-2.1.5.zip` (portable с лицензиями).

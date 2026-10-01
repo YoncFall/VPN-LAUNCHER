@@ -222,8 +222,10 @@ class MainWindow(QWidget):
 
         # --- ПОДПИСКА (VPN.ps1:110-118) ---
         _label(card, "ПОДПИСКА", 18, 12, 300, 16, theme.TEXT_DIM, theme.f_caps())
+        # 2.1.5: secret=True - вне фокуса поле показывает точки, по клику
+        # (или Tab) - настоящий URL и редактирование (просьба 01.10)
         self.field_sub = GameField(
-            "", "вставь ссылку на подписку (https://...)", card
+            "", "вставь ссылку на подписку (https://...)", card, secret=True
         )
         self.field_sub.setGeometry(18, 30, 556, 30)
 
