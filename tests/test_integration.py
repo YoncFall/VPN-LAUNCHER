@@ -1399,6 +1399,34 @@ class TestSecretSubField:
         assert win.field_sub.echoMode() == QLineEdit.EchoMode.Password
         assert win.field_sub.text() == "https://sub.example/x"
 
+    def test_hidden_after_show_and_click_reveals(self, qapp, win):
+        """2.1.5 (жалоба 01.10): при показе окна поле НЕ раскрывается.
+
+        Qt при активации кладёт фокус в первое поле - окно перехватывает
+        фокус само; URL появляется только по нажатию.
+        """
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QLineEdit
+
+        win.show()
+        for _ in range(30):  # singleShot(0) + активация отрабатывают
+            QApplication.processEvents()
+            time.sleep(0.01)
+        assert QApplication.focusWidget() is win  # фокус у окна, не у поля
+        assert not win.field_sub.hasFocus()
+        assert win.field_sub.echoMode() == QLineEdit.EchoMode.Password
+
+        # нажатие в поле = показ (даже если фокус уже стоит)
+        ev = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(5, 5), QPointF(5, 5), QPointF(5, 5),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        win.field_sub.mousePressEvent(ev)
+        assert win.field_sub.echoMode() == QLineEdit.EchoMode.Normal
+
     def test_plain_field_not_masked(self, qapp, win):
         """GameField без secret= не маскируется ни при каком фокусе."""
         from PySide6.QtCore import QEvent

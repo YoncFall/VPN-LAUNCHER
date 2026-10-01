@@ -185,10 +185,19 @@ class MainWindow(QWidget):
         self._sb_cfg: str | None = None
         self._sb_cfg_data: dict | None = None  # конфиг в памяти (с диска удалён)
         self._sb_restarts = 0
+        # 2.1.5: автофокус в поле подписки гасим ОДИН раз при первом показе
+        # (Qt сам кладёт фокус в первое поле - URL раскрывался при старте)
+        self._sub_focus_cleared = False
 
         self._apply_mask()
         self._build()
         self._restore_state()
+        # 2.1.5 (жалоба 01.10 «подписка не скрыта»): при активации окна Qt
+        # сам кладёт фокус в первое поле (подписка) - оно тут же
+        # раскрывалось при старте. Окно само держит фокус: поле остаётся
+        # с точками, URL - только по клику/Tab (см. showEvent + GameField).
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
 
         # таймер 10с: проверка процесса + внешний IP (VPN.ps1:615-641)
         self.tick = QTimer(self)
@@ -207,6 +216,15 @@ class MainWindow(QWidget):
         grad.setColorAt(0.0, theme.BG2)
         grad.setColorAt(1.0, theme.BG)
         p.fillRect(QRectF(0, 0, WIN_W, WIN_H), grad)
+
+    def showEvent(self, e) -> None:  # noqa: N802
+        # 2.1.5 (жалоба 01.10 «подписка не скрыта»): при первом показе Qt
+        # кладёт фокус в первое поле - focusIn раскрывал URL сразу при
+        # старте. Гасим фокус: поле покажет URL только по клику/Tab.
+        super().showEvent(e)
+        if not self._sub_focus_cleared:
+            self._sub_focus_cleared = True
+            QTimer.singleShot(0, self.field_sub.clearFocus)
 
     # ---- construction ----------------------------------------------------
     def _build(self) -> None:

@@ -69,3 +69,10 @@ class GameField(QLineEdit):
         super().focusOutEvent(e)
         if self._secret:
             self.setEchoMode(QLineEdit.EchoMode.Password)
+
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        # 2.1.5: нажатие = показ, даже если поле уже в фокусе (фокус могли
+        # дать программно - тогда FocusIn не придёт и поле "залипло" точками)
+        if self._secret:
+            self.setEchoMode(QLineEdit.EchoMode.Normal)
+        super().mousePressEvent(e)
