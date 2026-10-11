@@ -1491,6 +1491,36 @@ class TestZapret:
                 if value.startswith(bin_prefix) or value.startswith(lists_prefix):
                     assert Path(value).exists(), value
 
+    def test_every_profile_self_contained(self):
+        """v2 (12.10): каждый профиль (блок до/после --new) обязан содержать
+        свой --dpi-desync и свой фильтр. В v1 списки жили в отдельном
+        «голом» профиле №1 без метода - он перехватывал целевые хосты
+        раньше профилей с методами, и обход не срабатывал вообще,
+        хотя winws работал (документация: профили самодостаточны,
+        наследования нет)."""
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        for preset in PRESETS:
+            profiles: list[list[str]] = [[]]
+            for a in preset["args"]:
+                if a == "--new":
+                    profiles.append([])
+                else:
+                    profiles[-1].append(a)
+            assert len(profiles) == 5, preset["name"]
+            for i, prof in enumerate(profiles):
+                assert any(a.startswith("--dpi-desync=") for a in prof), (
+                    f"{preset['name']} profile#{i}: нет --dpi-desync"
+                )
+                assert any(
+                    a.startswith("--filter-tcp=") or a.startswith("--filter-udp=")
+                    for a in prof
+                ), f"{preset['name']} profile#{i}: нет фильтра"
+            # TLS-профиль обязан целиться списком хостов, а не ловить всё
+            tls_prof = profiles[0]
+            assert any(a.startswith("--hostlist=") for a in tls_prof)
+            assert "--filter-tcp=443" in tls_prof
+
     def test_payloads_shape(self):
         """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
         Discord Voice IP Discovery начинается с type 0x0001."""
