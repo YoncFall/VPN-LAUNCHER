@@ -123,9 +123,27 @@ class ZapretController:
             self.stop()
         args = [str(WINWS), *build_args(name)]
         write_log(f"zapret: start strategy '{name}' ({len(args) - 1} args)")
-        self._proc = subprocess.Popen(
-            args, cwd=str(BIN_DIR), creationflags=_CREATE_NO_WINDOW
-        )
+        # вывод winws (ошибки запуска без --debug печатаются именно туда)
+        # перенаправляем в файл - иначе он теряется без консоли
+        log_path = ZAPRET_DIR / "winws.log"
+        try:
+            logf = open(log_path, "w", encoding="utf-8", errors="replace")
+        except OSError:
+            logf = None
+        try:
+            self._proc = subprocess.Popen(
+                args, cwd=str(BIN_DIR), creationflags=_CREATE_NO_WINDOW,
+                stdout=logf, stderr=logf,
+            )
+        finally:
+            if logf is not None:
+                logf.close()
+        time.sleep(0.35)  # мгновенный крэш/ошибка аргументов - фиксируем
+        rc = self._proc.poll()
+        if rc is not None:
+            write_log(
+                f"zapret: winws '{name}' exited immediately (code {rc})"
+            )
 
     def stop(self) -> None:
         """Остановить СВОЙ winws (сиротой при закрытии окна не оставляем)."""
@@ -159,16 +177,19 @@ def run_autotest(
     """
     probe_fn = probe_fn or probe
     if foreign_winws_running():
+        write_log("zapret: foreign winws running - autotest aborted")
         return None, "Запущен другой обход (winws) - закрой его и повтори"
 
     if probe_fn():
         # блокировок не видно (или они уже сняты) - базовая стратегия
+        write_log("zapret: baseline probe passed, no blocks visible")
         try:
             controller.start("general")
         except OSError as exc:
             return None, f"Не удалось запустить winws: {exc}"
         return "general", "Блокировок не обнаружено - оставляю general"
 
+    write_log("zapret: blocks detected, iterating strategies")
     total = len(PRESETS)
     for i, preset in enumerate(PRESETS, 1):
         if progress:
@@ -180,6 +201,9 @@ def run_autotest(
             continue
         time.sleep(warmup)
         if probe_fn():
+            write_log(f"zapret: winner '{preset['name']}' ({i}/{total})")
             return preset["name"], f"Рабочая стратегия: {preset['name']} ({i}/{total})"
+        write_log(f"zapret: '{preset['name']}' did not unblock")
         controller.stop()
+    write_log("zapret: no strategy worked")
     return None, "Ни одна стратегия не помогла - проверь интернет"

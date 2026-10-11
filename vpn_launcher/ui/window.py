@@ -456,6 +456,7 @@ class MainWindow(QWidget):
             return
         if self._zapret.running():
             self._zapret.stop()
+        write_log("zapret: autotest worker starting")
         self.btn_zapret.setEnabled(False)
         self._status("Подбор обхода...", theme.WARN)
         self._zapret_worker = ZapretWorker(self._zapret)
@@ -465,6 +466,7 @@ class MainWindow(QWidget):
 
     def _zapret_done(self, name: str, msg: str) -> None:
         self.btn_zapret.setEnabled(True)
+        write_log(f"zapret: autotest done: winner={name or 'none'} ({msg})")
         if name:
             # выигравшая стратегия остаётся запущенной (run_autotest не
             # гасит её) и запоминается: следующий ЛКМ - включение с неё
@@ -476,6 +478,7 @@ class MainWindow(QWidget):
 
     def _zapret_autostart(self) -> None:
         """--autozapret: продолжение после повышения прав (как autoconnect)."""
+        write_log("zapret: --autozapret continuation")
         self._zapret_click()
 
     def _restore_state(self) -> None:

@@ -14,3 +14,6 @@ cache.db
 app.pid
 watch-internet.log
 watch-internet.log.old
+
+# runtime: вывод winws (диагностика обхода DPI)
+zapret/winws.log
