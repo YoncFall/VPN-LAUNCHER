@@ -44,9 +44,19 @@ _WF = (
 )
 
 # списки профиля (обязательны в каждом профиле с хост-фильтром)
-_HOSTS = (
-    "--hostlist={LISTS}list-general.txt",
-    "--hostlist-exclude={LISTS}list-exclude.txt",
+_EXCLUDE = ("--hostlist-exclude={LISTS}list-exclude.txt",)
+_HOSTS = ("--hostlist={LISTS}list-general.txt", *_EXCLUDE)
+
+# группы хостов для комбо (диагностика 12.10: fake прошла discord.com и
+# gateway.discord.gg, multidisorder - единственная техника, стабильно
+# снявшая блок с www.youtube.com)
+_DISCORD_DOMAINS = (
+    "--hostlist-domains=discord.com,discord.gg,discordapp.com,"
+    "discordapp.net,discord.media,discordcdn.com,discordstatus.com",
+)
+_GOOGLE_DOMAINS = (
+    "--hostlist-domains=youtube.com,youtube-nocookie.com,"
+    "googlevideo.com,ytimg.com,youtubei.googleapis.com",
 )
 
 # --- общие профили (не меняются между стратегиями) --------------------------
@@ -185,16 +195,9 @@ def _tls_repeats() -> tuple[str, ...]:
     return _tls_fake_multisplit() + ("--dpi-desync-repeats=11",)
 
 
-def _chain(name: str, tls: tuple[str, ...]) -> list[str]:
-    """Пять самодостаточных профилей: фильтр + списки + метод в каждом."""
+def _tail() -> list[str]:
+    """Общие профили (HTTP/QUIC/голос/media) - одинаковы для всех стратегий."""
     return [
-        f"--comment=vpl-{name}",
-        *_WF,
-        # 1. HTTPS/TLS 443
-        "--filter-tcp=443",
-        "--filter-l7=tls",
-        *_HOSTS,
-        *tls,
         # 2. HTTP 80
         "--new",
         "--filter-tcp=80",
@@ -216,12 +219,55 @@ def _chain(name: str, tls: tuple[str, ...]) -> list[str]:
         "--new",
         "--filter-tcp=2053,2083,2087,2096,8443",
         "--hostlist-domains=discord.media",
-        "--hostlist-exclude={LISTS}list-exclude.txt",
+        *_EXCLUDE,
         *_MEDIA_TECH,
     ]
 
 
+def _chain(name: str, tls: tuple[str, ...]) -> list[str]:
+    """Пять самодостаточных профилей: фильтр + списки + метод в каждом."""
+    return [
+        f"--comment=vpl-{name}",
+        *_WF,
+        # 1. HTTPS/TLS 443
+        "--filter-tcp=443",
+        "--filter-l7=tls",
+        *_HOSTS,
+        *tls,
+        *_tail(),
+    ]
+
+
+def _combo_chain() -> list[str]:
+    """Комбо: TLS-профили по группам хостов (живая диагностика 12.10).
+
+    discord-группа: fake - прошла discord.com и gateway.discord.gg;
+    google-группа: multidisorder - единственная техника, которая стабильно
+    снимала блок с www.youtube.com (4/4 прогона проб под winws). Смысл
+    комбо - РАЗНЫЕ техники для групп, общий хост-список тут не выигрывает.
+    """
+    return [
+        "--comment=vpl-combo",
+        *_WF,
+        # 1. Discord и прочие / TLS 443: фейк google-ClientHello
+        "--filter-tcp=443",
+        "--filter-l7=tls",
+        *_DISCORD_DOMAINS,
+        *_EXCLUDE,
+        *_tls_fake(),
+        # 2. Google/YouTube / TLS 443: переупорядочивание сегментов
+        "--new",
+        "--filter-tcp=443",
+        "--filter-l7=tls",
+        *_GOOGLE_DOMAINS,
+        *_EXCLUDE,
+        *_tls_disorder(),
+        *_tail(),
+    ]
+
+
 PRESETS: list[dict] = [
+    {"name": "combo",         "args": _combo_chain()},
     {"name": "general",       "args": _chain("general", _tls_seqovl())},
     {"name": "fake",          "args": _chain("fake", _tls_fake())},
     {"name": "multisplit",    "args": _chain("multisplit", _tls_multisplit())},

@@ -1461,8 +1461,8 @@ class TestZapret:
             return bool(self.started)
 
     def test_presets_packaged_and_valid(self):
-        """9 собственных стратегий (наши комбинации задокументированных
-        опций winws): имена уникальны, general первая, аргументы целые,
+        """10 собственных стратегий (наши комбинации задокументированных
+        опций winws): имена уникальны, combo первая, аргументы целые,
         winws и все упомянутые файлы запакованы (лежат на диске)."""
         from vpn_launcher.core.zapret import (
             BIN_DIR,
@@ -1474,8 +1474,8 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert len(names) == 9 and len(set(names)) == 9
-        assert names[0] == "general"
+        assert len(names) == 10 and len(set(names)) == 10
+        assert names[0] == "combo"
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
         assert (LISTS_DIR / "list-general.txt").exists()
@@ -1507,7 +1507,9 @@ class TestZapret:
                     profiles.append([])
                 else:
                     profiles[-1].append(a)
-            assert len(profiles) == 5, preset["name"]
+            # у комбо два TLS-профиля (по группам хостов) - шесть всего
+            expected = 6 if preset["name"] == "combo" else 5
+            assert len(profiles) == expected, preset["name"]
             for i, prof in enumerate(profiles):
                 assert any(a.startswith("--dpi-desync=") for a in prof), (
                     f"{preset['name']} profile#{i}: нет --dpi-desync"
@@ -1518,8 +1520,40 @@ class TestZapret:
                 ), f"{preset['name']} profile#{i}: нет фильтра"
             # TLS-профиль обязан целиться списком хостов, а не ловить всё
             tls_prof = profiles[0]
-            assert any(a.startswith("--hostlist=") for a in tls_prof)
+            assert any(
+                a.startswith("--hostlist=") or a.startswith("--hostlist-domains=")
+                for a in tls_prof
+            )
             assert "--filter-tcp=443" in tls_prof
+
+    def test_combo_first_with_per_group_techniques(self):
+        """12.10 (живая диагностика под winws): combo - ПЕРВАЯ стратегия.
+        TLS разбит на две группы хостов с РАЗНЫМИ техниками - в этом её
+        смысл: discord=fake прошла discord.com+gateway.discord.gg,
+        google=disorder - единственная техника, снявшая блок с youtube."""
+        from vpn_launcher.core.zapret import build_args, preset_names
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        assert preset_names()[0] == "combo"
+        args = PRESETS[0]["args"]
+        profiles: list[list[str]] = [[]]
+        for a in args:
+            if a == "--new":
+                profiles.append([])
+            else:
+                profiles[-1].append(a)
+        discord_prof, google_prof = profiles[0], profiles[1]
+        assert "--filter-l7=tls" in discord_prof
+        assert "--filter-l7=tls" in google_prof
+        assert any(a.startswith("--hostlist-domains=discord") for a in discord_prof)
+        assert any("youtube" in a for a in google_prof)
+        discord_tech = [a for a in discord_prof if a.startswith("--dpi-desync=")]
+        google_tech = [a for a in google_prof if a.startswith("--dpi-desync=")]
+        assert discord_tech == ["--dpi-desync=fake"]
+        assert google_tech == ["--dpi-desync=multidisorder"]
+        # плейсхолдеры подставлены
+        for a in build_args("combo"):
+            assert "{BIN}" not in a and "{LISTS}" not in a
 
     def test_payloads_shape(self):
         """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
@@ -1581,16 +1615,20 @@ class TestZapret:
         assert ctl.started == [PRESETS[0]["name"], PRESETS[1]["name"]]
         assert ctl.stops == 1  # остановлена только проигравшая
 
-    def test_autotest_baseline_ok_uses_general(self, monkeypatch):
+    def test_autotest_baseline_ok_uses_first_preset(self, monkeypatch):
+        """baseline прошёл - стартует PRESETS[0] (combo): она же самая
+        устойчивая (диагностика 12.10: все три адреса зелёные)."""
         from vpn_launcher.core import zapret as zmod
+        from vpn_launcher.core.zapret_presets import PRESETS
 
         monkeypatch.setattr(
             zmod, "foreign_winws_running", lambda own_pid=None: False
         )
         ctl = self._FakeController()
         name, msg = zmod.run_autotest(ctl, probe_fn=lambda: True, warmup=0)
-        assert name == "general" and "не обнаружено" in msg
-        assert ctl.started == ["general"] and ctl.stops == 0
+        first = PRESETS[0]["name"]
+        assert name == first and "не обнаружено" in msg
+        assert ctl.started == [first] and ctl.stops == 0
 
     def test_autotest_foreign_winws_aborts(self, monkeypatch):
         from vpn_launcher.core import zapret as zmod
@@ -1656,6 +1694,38 @@ class TestZapret:
 
         monkeypatch.setattr(zmod, "_fetch", boom)
         assert zmod.probe() is False
+
+    def test_probe_retries_flaky_url(self, monkeypatch):
+        """12.10: сеть мигает (anycast-IP блокируются избирательно) - один
+        мёртвый прогон URL не должен обваливать стратегию, второй проход
+        спасает; при этом стабильная недоступность недоступностью и
+        остаётся (проверено в test_probe_fails_on_5xx_and_transport)."""
+        from vpn_launcher.core import zapret as zmod
+
+        calls: list[str] = []
+
+        def flaky(url, timeout):
+            calls.append(url)
+            if len(calls) == 1:
+                raise TimeoutError("handshake timed out")
+            return 200
+
+        monkeypatch.setattr(zmod, "_fetch", flaky)
+        assert zmod.probe() is True
+        # первый URL ушёл дважды (упал - повторился - прошёл), остальные
+        # два по одному разу
+        assert calls[0] == calls[1] == zmod.PROBE_URLS[0]
+        assert len(calls) == 4
+
+    def test_probe_youtube_checked_first(self):
+        """youtube - стабильный дискриминатор (без обхода режется всегда,
+        discord/gateway мигают): проба начинает с него, чтобы бесполезная
+        стратегия отсеивалась быстро."""
+        from vpn_launcher.core.zapret import PROBE_URLS
+
+        assert PROBE_URLS[0] == "https://www.youtube.com"
+        assert "https://discord.com/api/gateway" in PROBE_URLS
+        assert "https://gateway.discord.gg/api/gateway" in PROBE_URLS
 
     def test_controller_lifecycle_safe(self):
         """Пустой контроллер: running=False, stop() не падает (сироты нет)."""

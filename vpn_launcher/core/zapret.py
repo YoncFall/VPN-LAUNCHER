@@ -36,12 +36,17 @@ LISTS_DIR = ZAPRET_DIR / "lists"
 # Пробы - DATA-запросы (HTTP GET с ответом), а не TCP-хендшейк: с заглушкой
 # соединения хендшейк «успевает» и даёт ложное «работает» (та же история,
 # что с auto-catcher v2 для winws).
+# youtube первым: стабильный дискриминатор (без обхода режется всегда),
+# а discord/gateway мигают - бесполезная стратегия отсеивается быстро.
 PROBE_URLS = (
+    "https://www.youtube.com",
     "https://discord.com/api/gateway",
     "https://gateway.discord.gg/api/gateway",
-    "https://www.youtube.com",
 )
 PROBE_TIMEOUT = 6.0
+_PROBE_ATTEMPTS = 2  # повтор на URL: сеть «мигает» (anycast-IP блокируются
+# избирательно), но стабильная недоступность (youtube без обхода) не проходит
+# ни при скольких попытках.
 WARMUP = 1.3  # окно старта winws: подхват WinDivert и поднятие фильтров
 
 _CREATE_NO_WINDOW = 0x08000000
@@ -122,17 +127,28 @@ def probe(urls: tuple[str, ...] = PROBE_URLS, timeout: float = PROBE_TIMEOUT) ->
     Любой HTTP-ответ (в т.ч. 404) доказывает проходимость трафика - это
     успех, а не недоступность (урл шлюза Discord всегда отдаёт 404, но
     urllib кидает на 4xx HTTPError). Недоступность - только сбой транспорта
-    (таймаут/RST) либо ответ 5xx. Вызов идёт через _fetch с ротацией IP.
+    (таймаут/RST) либо ответ 5xx. Каждый URL пробуем до _PROBE_ATTEMPTS
+    раз: диагностика 12.10 показала, что даже рабочие стратегии мигали на
+    одном адресе из трёх - единичный мёртвый прогон не должен обваливать
+    стратегию.
     """
     for url in urls:
-        try:
-            code = _fetch(url, timeout)
-        except Exception as exc:
-            reason = getattr(exc, "reason", None) or exc
-            write_log(f"zapret probe: {url} -> {type(exc).__name__}: {reason!r}")
-            return False
-        if code >= 500:
-            write_log(f"zapret probe: {url} -> HTTP {code}")
+        last: Exception | None = None
+        for attempt in range(_PROBE_ATTEMPTS):
+            if attempt:
+                time.sleep(1.0)
+            try:
+                code = _fetch(url, timeout)
+            except Exception as exc:
+                last = exc
+                continue
+            if code >= 500:
+                last = OSError(f"HTTP {code}")
+                continue
+            break
+        else:
+            reason = getattr(last, "reason", None) or last
+            write_log(f"zapret probe: {url} -> {type(last).__name__}: {reason!r}")
             return False
     return True
 
@@ -231,9 +247,9 @@ def run_autotest(
 ) -> tuple[str | None, str]:
     """Подбор рабочей стратегии. -> (имя | None, сообщение для статуса).
 
-    Порядок: чужой winws -> отказ; блокировок нет -> general (базовая);
-    иначе - первая стратегия, после которой пробы проходят. При успехе
-    выигравшая стратегия ОСТАЁТСЯ запущенной (controller не останавливается).
+    Порядок: чужой winws -> отказ; блокировок нет -> combo (PRESETS[0],
+    базовая); иначе - первая стратегия, после которой пробы проходят. При
+    успехе выигравшая стратегия ОСТАЁТСЯ запущенной (controller не останавливается).
     """
     probe_fn = probe_fn or probe
     if foreign_winws_running():
@@ -243,11 +259,12 @@ def run_autotest(
     if probe_fn():
         # блокировок не видно (или они уже сняты) - базовая стратегия
         write_log("zapret: baseline probe passed, no blocks visible")
+        name = PRESETS[0]["name"]
         try:
-            controller.start("general")
+            controller.start(name)
         except OSError as exc:
             return None, f"Не удалось запустить winws: {exc}"
-        return "general", "Блокировок не обнаружено - оставляю general"
+        return name, f"Блокировок не обнаружено - оставляю {name}"
 
     write_log("zapret: blocks detected, iterating strategies")
     total = len(PRESETS)
