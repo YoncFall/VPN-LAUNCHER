@@ -38,10 +38,15 @@ LISTS_DIR = ZAPRET_DIR / "lists"
 # что с auto-catcher v2 для winws).
 # youtube первым: стабильный дискриминатор (без обхода режется всегда),
 # а discord/gateway мигают - бесполезная стратегия отсеивается быстро.
+# cdn/media обязана участвовать: без cdn.discordapp.com не грузится сама
+# страница Discord (диагностика 12.10: под комбо discord.com и шлюз жили,
+# а cdn/media оставались мертвыми - и Discord не работал при «зелёной» пробе).
 PROBE_URLS = (
     "https://www.youtube.com",
     "https://discord.com/api/gateway",
+    "https://cdn.discordapp.com/",
     "https://gateway.discord.gg/api/gateway",
+    "https://media.discordapp.net/",
 )
 PROBE_TIMEOUT = 6.0
 _PROBE_ATTEMPTS = 2  # повтор на URL: сеть «мигает» (anycast-IP блокируются

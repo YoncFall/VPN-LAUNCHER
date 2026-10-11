@@ -1713,19 +1713,22 @@ class TestZapret:
         monkeypatch.setattr(zmod, "_fetch", flaky)
         assert zmod.probe() is True
         # первый URL ушёл дважды (упал - повторился - прошёл), остальные
-        # два по одному разу
+        # по одному разу
         assert calls[0] == calls[1] == zmod.PROBE_URLS[0]
-        assert len(calls) == 4
+        assert len(calls) == len(zmod.PROBE_URLS) + 1
 
     def test_probe_youtube_checked_first(self):
         """youtube - стабильный дискриминатор (без обхода режется всегда,
         discord/gateway мигают): проба начинает с него, чтобы бесполезная
-        стратегия отсеивалась быстро."""
+        стратегия отсеивалась быстро. cdn/media обязаны участвовать -
+        без cdn.discordapp.com страница Discord не грузится вовсе."""
         from vpn_launcher.core.zapret import PROBE_URLS
 
         assert PROBE_URLS[0] == "https://www.youtube.com"
         assert "https://discord.com/api/gateway" in PROBE_URLS
+        assert "https://cdn.discordapp.com/" in PROBE_URLS
         assert "https://gateway.discord.gg/api/gateway" in PROBE_URLS
+        assert "https://media.discordapp.net/" in PROBE_URLS
 
     def test_controller_lifecycle_safe(self):
         """Пустой контроллер: running=False, stop() не падает (сироты нет)."""
