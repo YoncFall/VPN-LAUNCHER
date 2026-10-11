@@ -41,7 +41,14 @@ if (-not (Test-Path (Join-Path $root 'installer\app.ico'))) { throw 'installer\a
 $env:VPN_VERSION = $Version
 if (-not $DistPath) { $DistPath = Join-Path $root 'dist' }
 elseif (-not [System.IO.Path]::IsPathRooted($DistPath)) { $DistPath = Join-Path $root $DistPath }
+# PS 5.1 quirk: with $ErrorActionPreference='Stop' any stderr line from a
+# native command (PyInstaller logs to stderr) becomes a terminating error
+# as soon as the caller redirects streams. Keep EAP=Continue for the native
+# call and rely on $LASTEXITCODE below.
+$eapPrev = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & $pyi --clean --noconfirm --distpath $DistPath (Join-Path $root 'VPNLauncher.spec')
+$ErrorActionPreference = $eapPrev
 if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed with code $LASTEXITCODE" }
 
 $dist = Join-Path $DistPath 'VPNLauncher'
@@ -57,11 +64,11 @@ Copy-Item (Join-Path $root 'sing-box.exe') (Join-Path $dist 'sing-box.exe') -For
 # not reach users, so the packed copies stay empty as shipped
 $zsrc = Join-Path $root 'zapret'
 $zdst = Join-Path $dist 'zapret'
-robocopy $zsrc $zdst /E /XF list-general-user.txt list-exclude-user.txt ipset-exclude-user.txt | Out-Null
+robocopy $zsrc $zdst /E /XF list-general-user.txt list-exclude-user.txt | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy zapret failed with code $LASTEXITCODE" }
 $LASTEXITCODE = 0
-foreach ($f in @('list-general-user.txt', 'list-exclude-user.txt', 'ipset-exclude-user.txt')) {
-    Set-Content -Path (Join-Path $zdst $f) -Value '' -NoNewline -Encoding UTF8
+foreach ($f in @('list-general-user.txt', 'list-exclude-user.txt')) {
+    Set-Content -Path (Join-Path (Join-Path $zdst 'lists') $f) -Value '' -NoNewline -Encoding UTF8
 }
 
 # docs travel with the app: GPL requires license texts next to the bundled

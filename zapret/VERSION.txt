@@ -1,0 +1,24 @@
+# Проверяемые составляющие обхода DPI (каталог zapret/).
+# Формат строк: <sha256>  <имя файла>.
+#
+# winws.exe, cygwin1.dll, WinDivert.dll, WinDivert64.sys:
+#   официальный релиз bol-van/zapret v72.13, каталог binaries/windows-x86_64,
+#   https://github.com/bol-van/zapret/releases/tag/v72.13
+#   хэши сверены с официальным файлом sha256sum.txt того же релиза;
+#   WinDivert 2.2.2 байт-в-байт совпадает с релизом автора WinDivert
+#   (https://github.com/basil00/WinDivert/releases/tag/v2.2.2),
+#   драйвер WinDivert64.sys проходит проверку Authenticode
+#   (валидная подпись).
+#
+# *.bin (fake-пакеты):
+#   сгенерированы СВОИМ скриптом tools/zapret/gen_payloads.py
+#   (детерминированно: повторный запуск даёт байт-в-байт те же файлы,
+#   эти хэши - эталон).
+a14bff1df6234ea555d2e0c61b589f0707c0b12d6c9b7eeccda76012154996e8  winws.exe
+103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b  cygwin1.dll
+c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2  WinDivert.dll
+8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2  WinDivert64.sys
+106399311fd51dbe859d9c0338bacade8c250ba72bdb5901d3952ca5de03c0df  tls-clienthello-google.bin
+22e0b9151981a7eeceda0488db292b7f112fcadda3df4c473596758506fa13eb  quic-initial-google.bin
+7d618aec12e6ad46bbf3a0319c7542ec275fa773e24d655ec6dfe227a1388151  stun-binding.bin
+0521eb98d9b2e66491c609b65b9265da7bd97e5fa13021f5e94e3733d5400d0a  discord-voice.bin

@@ -1461,8 +1461,9 @@ class TestZapret:
             return bool(self.started)
 
     def test_presets_packaged_and_valid(self):
-        """22 стратегии из репака: имена уникальны, general первая, аргументы
-        целые, winws и все упомянутые файлы запакованы (лежат на диске)."""
+        """9 собственных стратегий (наши комбинации задокументированных
+        опций winws): имена уникальны, general первая, аргументы целые,
+        winws и все упомянутые файлы запакованы (лежат на диске)."""
         from vpn_launcher.core.zapret import (
             BIN_DIR,
             LISTS_DIR,
@@ -1473,7 +1474,7 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert len(names) == 22 and len(set(names)) == 22
+        assert len(names) == 9 and len(set(names)) == 9
         assert names[0] == "general"
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
@@ -1489,6 +1490,44 @@ class TestZapret:
                 value = a.split("=", 1)[-1]
                 if value.startswith(bin_prefix) or value.startswith(lists_prefix):
                     assert Path(value).exists(), value
+
+    def test_payloads_shape(self):
+        """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
+        Discord Voice IP Discovery начинается с type 0x0001."""
+        from vpn_launcher.core.zapret import BIN_DIR
+
+        tls = (BIN_DIR / "tls-clienthello-google.bin").read_bytes()
+        quic = (BIN_DIR / "quic-initial-google.bin").read_bytes()
+        stun = (BIN_DIR / "stun-binding.bin").read_bytes()
+        discord = (BIN_DIR / "discord-voice.bin").read_bytes()
+        assert tls[0] == 0x16 and len(tls) > 100  # TLS handshake record
+        assert len(quic) == 1200
+        assert len(stun) == 100 and stun[:2] == b"\x00\x01"  # binding request
+        assert discord[:4] == b"\x00\x01\x00\x46"  # type 1, length 70
+
+    def test_components_match_recorded_hashes(self):
+        """Эталонные SHA-256 из zapret/VERSION.txt совпадают с файлами:
+        подмена любого компонента ломает тест (цепочка проверяемости)."""
+        import hashlib
+
+        from vpn_launcher.core.zapret import BIN_DIR
+
+        version_txt = BIN_DIR.parent / "VERSION.txt"
+        recorded = {}
+        for line in version_txt.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            digest, fname = line.split()
+            recorded[fname] = digest
+        assert set(recorded) == {
+            "winws.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys",
+            "tls-clienthello-google.bin", "quic-initial-google.bin",
+            "stun-binding.bin", "discord-voice.bin",
+        }
+        for fname, digest in recorded.items():
+            data = (BIN_DIR / fname).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == digest, fname
 
     def test_build_args_unknown_raises(self):
         from vpn_launcher.core.zapret import build_args
