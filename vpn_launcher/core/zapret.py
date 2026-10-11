@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -64,15 +65,27 @@ def build_args(name: str) -> list[str]:
 
 
 def probe(urls: tuple[str, ...] = PROBE_URLS, timeout: float = PROBE_TIMEOUT) -> bool:
-    """True - все узлы отвечают данными (HTTP < 500 за отведённое время)."""
+    """True - узлы отвечают данными.
+
+    Любой HTTP-ответ (в т.ч. 404) доказывает проходимость трафика - это
+    успех, а не недоступность (урл шлюза Discord всегда отдаёт 404, но
+    urllib кидает на 4xx HTTPError). Недоступность - только сбой транспорта
+    (таймаут/RST) либо ответ 5xx.
+    """
     for url in urls:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status >= 500:
+                    write_log(f"zapret probe: {url} -> HTTP {resp.status}")
                     return False
+        except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                write_log(f"zapret probe: {url} -> HTTP {exc.code}")
+                return False
         except Exception as exc:
-            write_log(f"zapret probe: {url} -> {exc.__class__.__name__}")
+            reason = getattr(exc, "reason", None) or exc
+            write_log(f"zapret probe: {url} -> {type(exc).__name__}: {reason!r}")
             return False
     return True
 

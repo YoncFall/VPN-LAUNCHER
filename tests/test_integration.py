@@ -1605,6 +1605,38 @@ class TestZapret:
         worker.run()  # прямой вызов, без QThread.start()
         assert captured == [("general", "ok")]
 
+    def test_probe_http_4xx_counts_as_reachable(self, monkeypatch):
+        """regression (12.10): шлюз Discord отвечает 404, urllib кидает
+        HTTPError - проба считала это недоступностью, и автоподбор не мог
+        выиграть вообще. 4xx = трафик дошёл = успех."""
+        import urllib.error
+
+        from vpn_launcher.core import zapret as zmod
+
+        def raise_404(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", None, None)
+
+        monkeypatch.setattr(zmod.urllib.request, "urlopen", raise_404)
+        assert zmod.probe() is True
+
+    def test_probe_fails_on_5xx_and_transport(self, monkeypatch):
+        """5xx и сбои транспорта (таймаут/RST) - по-прежнему недоступность."""
+        import urllib.error
+
+        from vpn_launcher.core import zapret as zmod
+
+        def raise_503(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", None, None)
+
+        monkeypatch.setattr(zmod.urllib.request, "urlopen", raise_503)
+        assert zmod.probe() is False
+
+        def raise_timeout(req, timeout=None):
+            raise urllib.error.URLError(TimeoutError("handshake timed out"))
+
+        monkeypatch.setattr(zmod.urllib.request, "urlopen", raise_timeout)
+        assert zmod.probe() is False
+
     def test_controller_lifecycle_safe(self):
         """Пустой контроллер: running=False, stop() не падает (сироты нет)."""
         from vpn_launcher.core.zapret import ZapretController
