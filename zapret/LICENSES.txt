@@ -1,0 +1,33 @@
+zapret (winws) - included binary component
+============================================
+
+This program bundles winws.exe from the zapret project, a separate work
+by bol-van and contributors, distributed under the GNU General Public
+License v3.0. It is NOT part of the VPN LAUNCHER source code and is
+covered by its own license.
+
+Source  : https://github.com/bol-van/zapret
+License : https://github.com/bol-van/zapret/blob/master/LICENSE
+Provenance: binaries taken from the zapret community repack v1.10.3
+(community "general*.bat" strategy presets, converted to
+vpn_launcher/core/zapret_presets.py).
+
+The bundled payload packets (bin/*.bin: fake TLS ClientHello / QUIC
+initial / STUN templates) and host/ip lists (lists/*.txt) come from the
+same repack; they are data files used by winws command-line options.
+
+WinDivert (https://github.com/reqrefuse/WinDivert), the packet capture
+driver used by winws (bin/WinDivert.dll, bin/WinDivert64.sys), is
+distributed under the LGPL-3.0 and is dynamically loaded by winws.
+
+If you redistribute this program you must keep this file, keep winws and
+WinDivert unmodified, and offer the corresponding source of all three
+components:
+
+  zapret     : https://github.com/bol-van/zapret
+  WinDivert  : https://github.com/reqrefuse/WinDivert
+  launcher   : https://github.com/YoncFall/VPN-LAUNCHER
+
+You may obtain a copy of the GPL-3.0 from
+<https://www.gnu.org/licenses/gpl-3.0.txt> or
+<https://github.com/YoncFall/VPN-LAUNCHER/blob/main/LICENSE>.

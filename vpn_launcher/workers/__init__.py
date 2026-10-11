@@ -87,3 +87,27 @@ class EgressWorker(QThread):
             self.got.emit(str(ip))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class ZapretWorker(QThread):
+    """Автоподбор стратегии обхода DPI (zapret); progress(текст) | done(имя, текст).
+
+    2.2.0: winws стартует/останавливается в core.zapret.run_autotest, пробы
+    сети идут здесь - окно не замерзает на несколько минут подбора.
+    """
+
+    progress = Signal(str)
+    done = Signal(str, str)
+
+    def __init__(self, controller) -> None:
+        super().__init__()
+        self._controller = controller
+
+    def run(self) -> None:
+        try:
+            name, msg = run_autotest(
+                self._controller, progress=lambda t: self.progress.emit(t)
+            )
+            self.done.emit(name or "", msg)
+        except Exception as exc:
+            self.done.emit("", f"Ошибка подбора: {exc}")

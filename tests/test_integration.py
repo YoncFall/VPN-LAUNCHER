@@ -1440,3 +1440,135 @@ class TestSecretSubField:
         plain.focusInEvent(QFocusEvent(QEvent.Type.FocusIn))
         plain.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut))
         assert plain.echoMode() == QLineEdit.EchoMode.Normal
+
+
+# ---- 2.2.0: обход блокировок (zapret/winws) -------------------------------
+
+
+class TestZapret:
+    class _FakeController:
+        def __init__(self) -> None:
+            self.started: list[str] = []
+            self.stops = 0
+
+        def start(self, name: str) -> None:
+            self.started.append(name)
+
+        def stop(self) -> None:
+            self.stops += 1
+
+        def running(self) -> bool:
+            return bool(self.started)
+
+    def test_presets_packaged_and_valid(self):
+        """22 стратегии из репака: имена уникальны, general первая, аргументы
+        целые, winws и все упомянутые файлы запакованы (лежат на диске)."""
+        from vpn_launcher.core.zapret import (
+            BIN_DIR,
+            LISTS_DIR,
+            WINWS,
+            build_args,
+            preset_names,
+        )
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        names = preset_names()
+        assert len(names) == 22 and len(set(names)) == 22
+        assert names[0] == "general"
+        assert WINWS.exists()
+        assert (BIN_DIR / "WinDivert64.sys").exists()
+        assert (LISTS_DIR / "list-general.txt").exists()
+        for p in PRESETS:
+            assert any(a.startswith("--dpi-desync") for a in p["args"])
+            assert any(a.startswith("--wf-tcp=") for a in p["args"])
+        bin_prefix = str(BIN_DIR) + "\\"
+        lists_prefix = str(LISTS_DIR) + "\\"
+        for name in names:
+            for a in build_args(name):
+                assert "{BIN}" not in a and "{LISTS}" not in a
+                value = a.split("=", 1)[-1]
+                if value.startswith(bin_prefix) or value.startswith(lists_prefix):
+                    assert Path(value).exists(), value
+
+    def test_build_args_unknown_raises(self):
+        from vpn_launcher.core.zapret import build_args
+
+        with pytest.raises(KeyError):
+            build_args("нет такой")
+
+    def test_autotest_picks_first_working(self, monkeypatch):
+        """baseline молчит -> general не помог -> помогает вторая: выбрана
+        она, проигравшая остановлена, выигравшая осталась работать."""
+        from vpn_launcher.core import zapret as zmod
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        ctl = self._FakeController()
+        answers = iter([False, False, True])  # baseline, general, вторая
+        name, _msg = zmod.run_autotest(ctl, probe_fn=lambda: next(answers), warmup=0)
+        assert name == PRESETS[1]["name"]
+        assert ctl.started == [PRESETS[0]["name"], PRESETS[1]["name"]]
+        assert ctl.stops == 1  # остановлена только проигравшая
+
+    def test_autotest_baseline_ok_uses_general(self, monkeypatch):
+        from vpn_launcher.core import zapret as zmod
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        ctl = self._FakeController()
+        name, msg = zmod.run_autotest(ctl, probe_fn=lambda: True, warmup=0)
+        assert name == "general" and "не обнаружено" in msg
+        assert ctl.started == ["general"] and ctl.stops == 0
+
+    def test_autotest_foreign_winws_aborts(self, monkeypatch):
+        from vpn_launcher.core import zapret as zmod
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: True
+        )
+        ctl = self._FakeController()
+        name, msg = zmod.run_autotest(ctl, probe_fn=lambda: True, warmup=0)
+        assert name is None and "другой обход" in msg
+        assert ctl.started == []  # чужой процесс - даже не пробуем
+
+    def test_autotest_all_fail(self, monkeypatch):
+        from vpn_launcher.core import zapret as zmod
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        ctl = self._FakeController()
+        name, msg = zmod.run_autotest(ctl, probe_fn=lambda: False, warmup=0)
+        assert name is None and "Ни одна" in msg
+        assert len(ctl.started) == len(PRESETS)
+        assert ctl.stops == len(PRESETS)
+
+    def test_controller_lifecycle_safe(self):
+        """Пустой контроллер: running=False, stop() не падает (сироты нет)."""
+        from vpn_launcher.core.zapret import ZapretController
+
+        ctl = ZapretController()
+        assert ctl.running() is False and ctl.pid is None
+        ctl.stop()
+
+    def test_window_has_zapret_button(self, win):
+        """Кнопка на месте; ПКМ (повторный подбор) - через контекстное меню."""
+        from PySide6.QtCore import Qt
+
+        assert hasattr(win, "btn_zapret")
+        assert (
+            win.btn_zapret.contextMenuPolicy()
+            == Qt.ContextMenuPolicy.CustomContextMenu
+        )
+
+    def test_strategy_saved_to_state(self, monkeypatch, tmp_path):
+        """_zapret_done кладёт выбранную стратегию в state.json (zapretStrategy)."""
+        from vpn_launcher.core import state as cstate
+
+        monkeypatch.setattr(cstate, "STATE_FILE", tmp_path / "state.json")
+        cstate.save_state({"zapretStrategy": "general (ALT3)"})
+        assert cstate.load_state().get("zapretStrategy") == "general (ALT3)"

@@ -35,6 +35,7 @@ if (-not (Test-Path $pyi)) {
     throw 'venv\Scripts\pyinstaller.exe not found. Run: venv\Scripts\pip install -r requirements.txt'
 }
 if (-not (Test-Path (Join-Path $root 'sing-box.exe'))) { throw 'sing-box.exe not found in repo root.' }
+if (-not (Test-Path (Join-Path $root 'zapret\bin\winws.exe'))) { throw 'zapret\bin\winws.exe not found in repo root.' }
 if (-not (Test-Path (Join-Path $root 'installer\app.ico'))) { throw 'installer\app.ico not found.' }
 
 $env:VPN_VERSION = $Version
@@ -50,6 +51,18 @@ if (-not (Test-Path (Join-Path $dist 'VPNLauncher.exe'))) {
 
 # engine next to the exe (do NOT touch the engine file itself)
 Copy-Item (Join-Path $root 'sing-box.exe') (Join-Path $dist 'sing-box.exe') -Force
+
+# 2.2.0: zapret (winws) engine for the DPI bypass feature - travels next
+# to the exe too (paths.install_root()/zapret); personal user lists must
+# not reach users, so the packed copies stay empty as shipped
+$zsrc = Join-Path $root 'zapret'
+$zdst = Join-Path $dist 'zapret'
+robocopy $zsrc $zdst /E /XF list-general-user.txt list-exclude-user.txt ipset-exclude-user.txt | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy zapret failed with code $LASTEXITCODE" }
+$LASTEXITCODE = 0
+foreach ($f in @('list-general-user.txt', 'list-exclude-user.txt', 'ipset-exclude-user.txt')) {
+    Set-Content -Path (Join-Path $zdst $f) -Value '' -NoNewline -Encoding UTF8
+}
 
 # docs travel with the app: GPL requires license texts next to the bundled
 # sing-box binary; they also go into the portable zip and the installer payload

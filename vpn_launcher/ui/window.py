@@ -55,6 +55,7 @@ from vpn_launcher.core.config import (
 )
 from vpn_launcher.core.log import write_log
 from vpn_launcher.core.state import load_state, save_state
+from vpn_launcher.core.zapret import ZapretController
 from vpn_launcher.paths import LOG_FILE, install_root
 from vpn_launcher.ui import theme
 from vpn_launcher.ui.widgets.button import GameButton
@@ -92,7 +93,12 @@ from vpn_launcher.win.proxy import (
     startup_proxy_cleanup,
 )
 from vpn_launcher.win.wfp import install_kill_switch, remove_kill_switch
-from vpn_launcher.workers import EgressWorker, PingWorker, SubscriptionWorker
+from vpn_launcher.workers import (
+    EgressWorker,
+    PingWorker,
+    SubscriptionWorker,
+    ZapretWorker,
+)
 
 WIN_W, WIN_H = 620, 726
 WIN_RADIUS = 12  # Install-GameCorners (theme.ps1:1253)
@@ -188,6 +194,9 @@ class MainWindow(QWidget):
         # 2.1.5: автофокус в поле подписки гасим ОДИН раз при первом показе
         # (Qt сам кладёт фокус в первое поле - URL раскрывался при старте)
         self._sub_focus_cleared = False
+        # 2.2.0: обход блокировок (zapret/winws) - свой контроллер процесса
+        self._zapret = ZapretController()
+        self._zapret_worker: ZapretWorker | None = None
 
         self._apply_mask()
         self._build()
@@ -249,6 +258,8 @@ class MainWindow(QWidget):
 
         # ширины пересчитаны (2.1.3): тексты не влезали в кнопки - drawText
         # с TextDontClip рисовал их сверху соседями/краем карточки
+        # 2.2.0: кнопка «Обход DPI» встала справа в строке «ПОДПИСКА» (ряд
+        # кнопок остался как в PS: сумма ширин четыре кнопки в 556px не влезла)
         self.btn_load = GameButton("Загрузить подписку", "ghost", 8, card)
         self.btn_load.setGeometry(18, 66, 216, 34)
         self.btn_ping = GameButton("Проверить пинг", "ghost", 8, card)
@@ -258,6 +269,15 @@ class MainWindow(QWidget):
         self.btn_log.clicked.connect(self._open_log)
         self.btn_load.clicked.connect(self._load_click)
         self.btn_ping.clicked.connect(self._ping_click)
+        self.btn_zapret = GameButton("Обход DPI", "ghost", 8, card)
+        self.btn_zapret.setGeometry(446, 6, 128, 22)
+        self.btn_zapret.setToolTip("ЛКМ - вкл/выкл обхода, ПКМ - подобрать заново")
+        # ПКМ = явный повторный подбор (если стратегия уже сохранена)
+        self.btn_zapret.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.btn_zapret.customContextMenuRequested.connect(
+            lambda *_: self._zapret_pick()
+        )
+        self.btn_zapret.clicked.connect(self._zapret_click)
 
         div1 = Divider(card)
         div1.setGeometry(18, 106, 556, 2)
@@ -376,6 +396,87 @@ class MainWindow(QWidget):
         self.lbl_egress = _label(
             card, "", 18, 644, 556, 16, theme.TEXT_DIM, theme.f_mono(), "right"
         )
+
+    # ---- обход блокировок (zapret) - новое, 02.10.2026 --------------------
+    def _zapret_click(self) -> None:
+        """ЛКМ «Обход DPI»: вкл/выкл; без сохранённой стратегии - автоподбор."""
+        if self._zapret.running():
+            self._zapret.stop()
+            self._status("Обход блокировок выключен", theme.TEXT_DIM)
+            return
+        if not is_elevated():
+            self._zapret_elevate()
+            return
+        strategy = str(self.state.get("zapretStrategy") or "")
+        if strategy:
+            try:
+                self._zapret.start(strategy)
+            except OSError as exc:
+                self._status(f"Не удалось запустить обход: {exc}", theme.DANGER)
+                return
+            self._status(f"Обход блокировок включён: {strategy}", theme.ACCENT2)
+        else:
+            self._zapret_pick()
+
+    def _zapret_elevate(self) -> None:
+        # winws требует админ-прав (WinDivert-драйвер): перезапускаем
+        # приложение повышенным с продолжением --autozapret - механика
+        # та же, что у --autoconnect (см. _connect_click, 2.1.4)
+        self._status("Нужны права администратора...", theme.WARN)
+        self.btn_zapret.setEnabled(False)
+        QApplication.processEvents()
+        ready = create_window_shown_event()
+        try:
+            p = self.pos()
+            relaunch_elevated(["--autozapret", f"--window-pos={p.x()},{p.y()}"])
+        except OSError as exc:
+            release_window_shown_event(ready)
+            if "UAC cancelled" in str(exc):
+                write_log("zapret: elevation cancelled by user")
+                self._status("Отменено - обход не запущен", theme.DANGER)
+            else:
+                self._status(
+                    "Не удалось получить права администратора", theme.DANGER
+                )
+            self.btn_zapret.setEnabled(True)
+            return
+        self._status("Запуск с правами администратора...")
+        QApplication.processEvents()
+        if ready is not None:
+            wait_window_shown(
+                ready, timeout_ms=15000, pump=lambda: QApplication.processEvents()
+            )
+            release_window_shown_event(ready)
+        self.close()
+
+    def _zapret_pick(self) -> None:
+        """Автоподбор: гоняет стратегии, пока пробы не пройдут (ПКМ тоже)."""
+        if not is_elevated():
+            self._zapret_elevate()
+            return
+        if self._zapret.running():
+            self._zapret.stop()
+        self.btn_zapret.setEnabled(False)
+        self._status("Подбор обхода...", theme.WARN)
+        self._zapret_worker = ZapretWorker(self._zapret)
+        self._zapret_worker.progress.connect(lambda t: self._status(t, theme.WARN))
+        self._zapret_worker.done.connect(self._zapret_done)
+        self._zapret_worker.start()
+
+    def _zapret_done(self, name: str, msg: str) -> None:
+        self.btn_zapret.setEnabled(True)
+        if name:
+            # выигравшая стратегия остаётся запущенной (run_autotest не
+            # гасит её) и запоминается: следующий ЛКМ - включение с неё
+            self.state["zapretStrategy"] = name
+            save_state(self.state)
+            self._status(msg, theme.ACCENT2)
+        else:
+            self._status(msg, theme.DANGER)
+
+    def _zapret_autostart(self) -> None:
+        """--autozapret: продолжение после повышения прав (как autoconnect)."""
+        self._zapret_click()
 
     def _restore_state(self) -> None:
         """Стартовое состояние (VPN.ps1:111, 180-184, 219, 300-303, 653).
@@ -1064,13 +1165,14 @@ class MainWindow(QWidget):
         self.tick.stop()
         if self._pinger is not None:
             self._pinger.cancel()
-        for w in (self._pinger, self._loader, self._egress):
+        for w in (self._pinger, self._loader, self._egress, self._zapret_worker):
             if w is not None and not w.wait(2000):
                 w.terminate()  # порт BeginStop - принудительная остановка
                 w.wait(500)
         remove_kill_switch()  # фильтры сняты и так (сессия WFP), но явно
         stop_sing_box(self.proc)
         self.proc = None
+        self._zapret.stop()  # 2.2.0: свой winws сиротой не оставляем
         set_proxy_off()
         super().closeEvent(e)
 
@@ -1145,6 +1247,7 @@ def _window_pos_arg(args: list[str]) -> tuple[int, int] | None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
     autoconnect = "--autoconnect" in args
+    autozapret = "--autozapret" in args  # 2.2.0: авто-после UAC (zapret)
     # живой чужой экземпляр (в т.ч. повышенный - у него свой мьютекс):
     # его движок сиротой НЕ считаем; проверка до _mark_pid, иначе файл
     # переписался бы нашим pid (см. mutex.live_foreign_app_pid)
@@ -1182,6 +1285,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if autoconnect:
         QTimer.singleShot(700, win.autoconnect)  # AutoTimer.Interval = 700
+    if autozapret:
+        # 2.2.0: пришли после перезапуска с правами - продолжаем обход DPI
+        QTimer.singleShot(700, win._zapret_autostart)
 
     # VPN_SHOT=<path>: снять окно и выйти (визуальные сверки с 1.0.6)
     shot = os.environ.get("VPN_SHOT")

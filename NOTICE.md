@@ -25,4 +25,13 @@
   external process.  No sing-box source code is included in this
   repository.
 
+  winws / zapret (https://github.com/bol-van/zapret) is a separate work
+  by bol-van et al., licensed under GPL-3.0.  This launcher bundles the
+  prebuilt winws.exe and runs it as an external process for the DPI
+  bypass feature ("Обход DPI"); its strategy presets were derived from
+  the zapret community repack command lines.  WinDivert
+  (https://github.com/reqrefuse/WinDivert), used by winws, is licensed
+  under LGPL-3.0.  See zapret/LICENSES.txt next to the binaries for
+  versions and hashes.
+
   Full GPL-3.0 text: https://www.gnu.org/licenses/gpl-3.0.html
