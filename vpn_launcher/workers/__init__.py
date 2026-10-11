@@ -20,6 +20,7 @@ from PySide6.QtCore import QThread, Signal
 
 from vpn_launcher.core.latency import measure_node_latency
 from vpn_launcher.core.subscription import fetch_nodes
+from vpn_launcher.core.zapret import run_autotest
 
 EGRESS_URL = "https://api.ipify.org?format=json"  # VPN.ps1:632
 

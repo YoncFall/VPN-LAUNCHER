@@ -1586,6 +1586,25 @@ class TestZapret:
         assert len(ctl.started) == len(PRESETS)
         assert ctl.stops == len(PRESETS)
 
+    def test_zapret_worker_emits_done(self, monkeypatch):
+        """regression (12.10): в workers не было импорта run_autotest -
+        воркер падал NameError сразу после UAC, подбор вообще не шёл.
+        run() должен дойти до run_autotest и эмитнуть done(имя, текст)."""
+        from vpn_launcher import workers as wmod
+        from vpn_launcher.workers import ZapretWorker
+
+        assert hasattr(wmod, "run_autotest"), "импорт run_autotest пропал"
+        monkeypatch.setattr(
+            wmod,
+            "run_autotest",
+            lambda ctl, progress=None: ("general", "ok"),
+        )
+        worker = ZapretWorker(object())
+        captured: list[tuple[str, str]] = []
+        worker.done.connect(lambda name, msg: captured.append((name, msg)))
+        worker.run()  # прямой вызов, без QThread.start()
+        assert captured == [("general", "ok")]
+
     def test_controller_lifecycle_safe(self):
         """Пустой контроллер: running=False, stop() не падает (сироты нет)."""
         from vpn_launcher.core.zapret import ZapretController
