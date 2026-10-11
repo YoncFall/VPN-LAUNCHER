@@ -17,12 +17,12 @@ terminate только ему). Чужие экземпляры winws (напр�
 """
 from __future__ import annotations
 
+import socket
+import ssl
 import subprocess
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from collections.abc import Callable
-from pathlib import Path
 
 from vpn_launcher.core.log import write_log
 from vpn_launcher.core.zapret_presets import PRESETS
@@ -64,28 +64,75 @@ def build_args(name: str) -> list[str]:
     raise KeyError(name)
 
 
+_MAX_IPS = 3  # сколько IP пробуем на один URL (ротация как у браузера)
+
+
+def _fetch(url: str, timeout: float) -> int:
+    """GET по URL со сменой IP при сбое (как это делает браузер).
+
+    anycast-IP одного хоста может блокироваться избирательно: хендшейк
+    упал на первом IP - пробуем следующие. urllib так не умеет (он
+    привязывается к первому соединившемуся IP), из-за чего проба
+    «падала» там, где браузер спокойно работает.
+    -> HTTP-код ответа; исключение - транспорт не дотянулся ни до одного IP.
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    target = parts.path or "/"
+    if parts.query:
+        target += "?" + parts.query
+    infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    ips: list[str] = []
+    for fam, _st, _pr, _cn, sa in infos:
+        if fam == socket.AF_INET and sa[0] not in ips:
+            ips.append(sa[0])
+    req = (
+        f"GET {target} HTTP/1.1\r\nHost: {host}\r\n"
+        "User-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+    ).encode("ascii")
+    last: Exception | None = None
+    for ip in ips[:_MAX_IPS]:
+        try:
+            ctx = ssl.create_default_context()
+            per_ip = min(timeout, 3.0)
+            with socket.create_connection((ip, port), timeout=per_ip) as raw:
+                with ctx.wrap_socket(raw, server_hostname=host) as tls_s:
+                    tls_s.sendall(req)
+                    data = b""
+                    while len(data) < 16:
+                        chunk = tls_s.recv(64)
+                        if not chunk:
+                            break
+                        data += chunk
+            fields = data.split()
+            if len(fields) < 2 or not fields[0].startswith(b"HTTP/"):
+                raise OSError("bad http response")
+            return int(fields[1])
+        except Exception as exc:
+            last = exc
+    if last is None:
+        raise OSError("no addresses for " + host)
+    raise last
+
+
 def probe(urls: tuple[str, ...] = PROBE_URLS, timeout: float = PROBE_TIMEOUT) -> bool:
     """True - узлы отвечают данными.
 
     Любой HTTP-ответ (в т.ч. 404) доказывает проходимость трафика - это
     успех, а не недоступность (урл шлюза Discord всегда отдаёт 404, но
     urllib кидает на 4xx HTTPError). Недоступность - только сбой транспорта
-    (таймаут/RST) либо ответ 5xx.
+    (таймаут/RST) либо ответ 5xx. Вызов идёт через _fetch с ротацией IP.
     """
     for url in urls:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status >= 500:
-                    write_log(f"zapret probe: {url} -> HTTP {resp.status}")
-                    return False
-        except urllib.error.HTTPError as exc:
-            if exc.code >= 500:
-                write_log(f"zapret probe: {url} -> HTTP {exc.code}")
-                return False
+            code = _fetch(url, timeout)
         except Exception as exc:
             reason = getattr(exc, "reason", None) or exc
             write_log(f"zapret probe: {url} -> {type(exc).__name__}: {reason!r}")
+            return False
+        if code >= 500:
+            write_log(f"zapret probe: {url} -> HTTP {code}")
             return False
     return True
 
