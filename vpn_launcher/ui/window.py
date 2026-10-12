@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFontMetrics,
@@ -42,7 +42,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
 
-from vpn_launcher import __version__
 from vpn_launcher.core.config import (
     APP_MODE_EXCLUDE,
     APP_MODE_INCLUDE,
@@ -67,6 +66,7 @@ from vpn_launcher.ui.widgets.led import Led
 from vpn_launcher.ui.widgets.neon_list import NeonList
 from vpn_launcher.ui.widgets.picker import GamePicker
 from vpn_launcher.ui.widgets.radio import GameRadio
+from vpn_launcher.ui.widgets.rocket import RocketButton
 from vpn_launcher.ui.widgets.title_bar import TitleBar
 from vpn_launcher.win.elevate import (
     create_window_shown_event,
@@ -213,6 +213,13 @@ class MainWindow(QWidget):
         self.tick.setInterval(10000)
         self.tick.timeout.connect(self._on_tick)
 
+        # лампа обхода DPI + ракета: синхронизация раз в секунду
+        # (просьба 12.10: у VPN и DPI - свои лампочки)
+        self.zapret_tick = QTimer(self)
+        self.zapret_tick.setInterval(1000)
+        self.zapret_tick.timeout.connect(self._zapret_sync)
+        self.zapret_tick.start()
+
     # ---- chrome ----------------------------------------------------------
     def _apply_mask(self) -> None:
         path = QPainterPath()
@@ -231,6 +238,11 @@ class MainWindow(QWidget):
         # кладёт фокус в первое поле - focusIn раскрывал URL сразу при
         # старте. Гасим фокус: поле покажет URL только по клику/Tab.
         super().showEvent(e)
+        # плашка-ракета: приклеена к правому краю, показывается/ездит вместе
+        # с главным окном (при сворачивании прячется - см. changeEvent)
+        self._place_rocket()
+        if not self.isMinimized():
+            self.btn_zapret.show()
         if not self._sub_focus_cleared:
             self._sub_focus_cleared = True
             QTimer.singleShot(0, self.field_sub.clearFocus)
@@ -269,15 +281,15 @@ class MainWindow(QWidget):
         self.btn_log.clicked.connect(self._open_log)
         self.btn_load.clicked.connect(self._load_click)
         self.btn_ping.clicked.connect(self._ping_click)
-        self.btn_zapret = GameButton("Обход DPI", "ghost", 8, card)
-        self.btn_zapret.setGeometry(446, 6, 128, 22)
-        self.btn_zapret.setToolTip("ЛКМ - вкл/выкл обхода, ПКМ - подобрать заново")
-        # ПКМ = явный повторный подбор (если стратегия уже сохранена)
-        self.btn_zapret.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # 2.2.0 UX (просьба 12.10): кнопка «Обход DPI» вынесена из
+        # интерфейса - ракета-плашка, приклеенная к правому краю окна
+        # (торчит наружу); поведение прежнее - ЛКМ вкл/выкл, ПКМ подбор
+        self.btn_zapret = RocketButton()
+        self._place_rocket()
+        self.btn_zapret.clicked.connect(self._zapret_click)
         self.btn_zapret.customContextMenuRequested.connect(
             lambda *_: self._zapret_pick()
         )
-        self.btn_zapret.clicked.connect(self._zapret_click)
 
         div1 = Divider(card)
         div1.setGeometry(18, 106, 556, 2)
@@ -393,15 +405,65 @@ class MainWindow(QWidget):
         self.lbl_status = _label(
             card, "Готов", 36, 627, 530, 16, theme.TEXT, theme.f_body(),
         )
+        # лампа обхода DPI - своя, как у VPN (просьба 12.10), под строкой
+        # статуса слева; IP-строка справа ей не мешает (текст прижат вправо)
+        self.led_zapret = Led(10, "off", card)
+        self.led_zapret.setGeometry(18, 647, 10, 10)
+        self.lbl_zapret = _label(
+            card, "DPI", 36, 644, 44, 16, theme.TEXT_DIM, theme.f_caps(),
+        )
         self.lbl_egress = _label(
             card, "", 18, 644, 556, 16, theme.TEXT_DIM, theme.f_mono(), "right"
         )
 
     # ---- обход блокировок (zapret) - новое, 02.10.2026 --------------------
+    def _place_rocket(self) -> None:
+        """Плашка-ракета приклеена к правому краю окна (торчит наружу)."""
+        p = self.pos()
+        self.btn_zapret.attach_to(p.x(), p.y(), WIN_W)
+
+    def _zapret_sync(self) -> None:
+        """Лампа DPI и ракета отслеживают обход (таймер 1с, запрос 12.10).
+
+        ok - winws жив; warn+пульс - идёт подбор или повышение прав;
+        off - обход выключен (лампа остаётся тусклой точкой, как у VPN).
+        """
+        busy = not self.btn_zapret.isEnabled() or (
+            self._zapret_worker is not None and self._zapret_worker.isRunning()
+        )
+        running = self._zapret.running()
+        led = self.led_zapret
+        if busy:
+            if not (led.state() == "warn" and led.is_lit()):
+                led.light_up("warn", pulse=True)
+        elif running:
+            if not (led.state() == "ok" and led.is_lit()):
+                led.light_up("ok", pulse=False)
+        elif led.state() != "off":
+            # set_state гасит и пульсацию (led._tick останавливает таймер)
+            led.set_state("off")
+        self.btn_zapret.set_active(running)
+
+    def moveEvent(self, e) -> None:  # noqa: N802
+        # плашка-ракета ездит вместе с окном (просьба 12.10)
+        super().moveEvent(e)
+        self._place_rocket()
+
+    def changeEvent(self, e) -> None:  # noqa: N802
+        # свернули - прячем ракету, развернули - возвращаем на место
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                self.btn_zapret.hide()
+            elif not self.isHidden():
+                self._place_rocket()
+                self.btn_zapret.show()
+
     def _zapret_click(self) -> None:
         """ЛКМ «Обход DPI»: вкл/выкл; без сохранённой стратегии - автоподбор."""
         if self._zapret.running():
             self._zapret.stop()
+            self._zapret_sync()
             self._status("Обход блокировок выключен", theme.TEXT_DIM)
             return
         if not is_elevated():
@@ -414,6 +476,7 @@ class MainWindow(QWidget):
             except OSError as exc:
                 self._status(f"Не удалось запустить обход: {exc}", theme.DANGER)
                 return
+            self._zapret_sync()
             self._status(f"Обход блокировок включён: {strategy}", theme.ACCENT2)
         else:
             self._zapret_pick()
@@ -424,6 +487,7 @@ class MainWindow(QWidget):
         # та же, что у --autoconnect (см. _connect_click, 2.1.4)
         self._status("Нужны права администратора...", theme.WARN)
         self.btn_zapret.setEnabled(False)
+        self._zapret_sync()  # лампа DPI - warn (идёт подбор/повышение)
         QApplication.processEvents()
         ready = create_window_shown_event()
         try:
@@ -475,6 +539,7 @@ class MainWindow(QWidget):
             self._status(msg, theme.ACCENT2)
         else:
             self._status(msg, theme.DANGER)
+        self._zapret_sync()  # лампа/ракета сразу отражают итог подбора
 
     def _zapret_autostart(self) -> None:
         """--autozapret: продолжение после повышения прав (как autoconnect)."""
@@ -1166,6 +1231,8 @@ class MainWindow(QWidget):
     # ---- закрытие (VPN.ps1:643-651) --------------------------------------
     def closeEvent(self, e) -> None:  # noqa: N802
         self.tick.stop()
+        self.zapret_tick.stop()
+        self.btn_zapret.close()  # плашка-ракета - отдельное окно, сиротой не остаётся
         if self._pinger is not None:
             self._pinger.cancel()
         for w in (self._pinger, self._loader, self._egress, self._zapret_worker):

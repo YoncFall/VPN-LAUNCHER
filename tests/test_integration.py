@@ -76,6 +76,7 @@ def win(qapp):
     )
     yield w
     w.tick.stop()
+    w.zapret_tick.stop()
     w.close()
 
 
@@ -1769,6 +1770,40 @@ class TestZapret:
             win.btn_zapret.contextMenuPolicy()
             == Qt.ContextMenuPolicy.CustomContextMenu
         )
+
+    def test_rocket_glued_to_edge_and_follows(self, win, qapp):
+        """Плашка-ракета приклеена к правому краю окна и ездит за ним
+        (просьба 12.10: кнопка обхода торчит сбоку, а не в интерфейсе)."""
+        from vpn_launcher.ui.window import WIN_W
+        from vpn_launcher.ui.widgets.rocket import GLUE_PX, TOP_PX
+
+        win.show()
+        qapp.processEvents()
+        win.move(150, 90)
+        assert _await(
+            qapp, lambda: win.btn_zapret.pos().x() == 150 + WIN_W - GLUE_PX
+        )
+        assert win.btn_zapret.pos().y() == 90 + TOP_PX
+
+    def test_zapret_lamp_and_rocket_state(self, monkeypatch, win):
+        """Своя лампа DPI (просьба 12.10): ok при работающем winws, warn
+        при подборе (кнопка выключена), off при выключенном; ракета
+        загорается вместе с лампой."""
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        win._zapret_sync()
+        assert win.led_zapret.state() == "ok"
+        assert win.btn_zapret.is_active()
+
+        win.btn_zapret.setEnabled(False)  # идёт подбор
+        win._zapret_sync()
+        assert win.led_zapret.state() == "warn"
+        assert win.led_zapret._pulse
+
+        win.btn_zapret.setEnabled(True)
+        monkeypatch.setattr(win._zapret, "running", lambda: False)
+        win._zapret_sync()
+        assert win.led_zapret.state() == "off"
+        assert not win.btn_zapret.is_active()
 
     def test_strategy_saved_to_state(self, monkeypatch, tmp_path):
         """_zapret_done кладёт выбранную стратегию в state.json (zapretStrategy)."""
