@@ -1575,6 +1575,13 @@ class TestZapret:
         # ipset-профили ссылаются на пустой по умолчанию файл
         assert any(a.startswith("--ipset={LISTS}ipset-all.txt") for a in
                    profiles[5] + profiles[6])
+        # v4 (12.10, фикс демок 1007): fake-файлы эталона ALT9 и
+        # --ipset-exclude в QUIC/основном профилях (как в эталоне)
+        assert "--dpi-desync-fake-quic=+0@{BIN}quic_initial_www_google_com.bin" in quic
+        assert "--ipset-exclude={LISTS}ipset-exclude.txt" in quic
+        assert "--dpi-desync-fake-discord=+0@{BIN}ACTIVE_DISCORD_UDP.bin" in voice
+        assert "--dpi-desync-fake-stun=+0@{BIN}ACTIVE_DISCORD_UDP.bin" in voice
+        assert "--ipset-exclude={LISTS}ipset-exclude.txt" in main
         # плейсхолдеры подставлены
         for a in build_args("combo"):
             assert "{BIN}" not in a and "{LISTS}" not in a
@@ -1612,6 +1619,9 @@ class TestZapret:
             "winws.exe", "cygwin1.dll", "WinDivert.dll", "WinDivert64.sys",
             "tls-clienthello-google.bin", "quic-initial-google.bin",
             "stun-binding.bin", "discord-voice.bin",
+            # v4 (12.10): эталонные фейки zapret-discord для демок
+            "quic_initial_www_google_com.bin", "ACTIVE_DISCORD_UDP.bin",
+            "ACTIVE_GAME_UDP.bin",
         }
         for fname, digest in recorded.items():
             data = (BIN_DIR / fname).read_bytes()

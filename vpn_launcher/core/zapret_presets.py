@@ -17,6 +17,16 @@ v3 (12.10.2026) - КОМБО = РЕПЛИКА ПРОВЕРЕННОЙ КОНФИ�
   Комбо теперь повторяет её профиль в профиль ( QUIC, голос/STUN,
   медиа-альт-порты, google-группа, основной список, ipset-заглушки).
 
+v4 (12.10.2026) - ФИКС ДЕМОК ЭКРАНА (Discord, ошибка 1007):
+  Часть демонстраций экрана не грузилась с combo, хотя ALT9 грузил.
+  Два расхождения с эталоном найдены и выровнены: (1) fake-файлы были
+  СВОИ (gen_payloads), а не эталонные zapret-discord
+  quic_initial_www_google_com.bin / ACTIVE_DISCORD_UDP.bin - скопированы
+  из рабочего пакета и подключены (хэши в zapret/VERSION.txt, исходный
+  пакет не менялся); (2) в QUIC- и основном профилях не было
+  --ipset-exclude, как в ALT9 - добавлены. Списки проверены построчно:
+  наши - супермножество эталона, user-файлы - заглушки в обеих сторонах.
+
 v2 (12.10.2026) - ПОСТРОЕНИЕ ПРОФИЛЕЙ:
   Профили разделяются --new, наследования НЕТ: у каждого профиля свой
   фильтр + свои списки + свой метод (документация: "Each profile has a
@@ -39,9 +49,11 @@ v2 (12.10.2026) - ПОСТРОЕНИЕ ПРОФИЛЕЙ:
 from __future__ import annotations
 
 _FAKE_TLS = "+0@{BIN}tls-clienthello-google.bin"
-_FAKE_QUIC = "+0@{BIN}quic-initial-google.bin"
-_FAKE_DISCORD = "+0@{BIN}discord-voice.bin"
-_FAKE_STUN = "+0@{BIN}stun-binding.bin"
+# v4 (12.10.2026): QUIC/голос-фейки = ЭТАЛОННЫЕ файлы zapret-discord
+# (с ними у пользователя грузились демки экрана, ошибка 1007); свои
+# gen_payloads-фейки давали мимо. Хэши - в zapret/VERSION.txt.
+_FAKE_QUIC = "+0@{BIN}quic_initial_www_google_com.bin"
+_FAKE_DISCORD = "+0@{BIN}ACTIVE_DISCORD_UDP.bin"
 # паттерн seqovl-наложения: любой валидный ClientHello (наш google)
 _SEQOVL_PATTERN = "+0@{BIN}tls-clienthello-google.bin"
 
@@ -83,7 +95,7 @@ _DISCORD_TECH = (
     "--dpi-desync-autottl",
     "--dpi-desync-repeats=6",
     f"--dpi-desync-fake-discord={_FAKE_DISCORD}",
-    f"--dpi-desync-fake-stun={_FAKE_STUN}",
+    f"--dpi-desync-fake-stun={_FAKE_DISCORD}",  # в ALT9 оба фейка = ACTIVE
 )
 
 # альт-порты discord.media (звонки/стримы идут не на 443)
@@ -279,6 +291,12 @@ _EXCL_IPSET = (
     "--ipset-exclude={LISTS}ipset-exclude-user.txt",
 )
 
+# только ipset-exclude - для профилей с хост-списками (как в ALT9)
+_IPSET_EXCL = (
+    "--ipset-exclude={LISTS}ipset-exclude.txt",
+    "--ipset-exclude={LISTS}ipset-exclude-user.txt",
+)
+
 
 def _combo_chain() -> list[str]:
     """Комбо = реплика проверенной рабочей конфигурации (v3, 12.10.2026).
@@ -298,6 +316,7 @@ def _combo_chain() -> list[str]:
         "--filter-udp=443",
         "--filter-l7=quic",
         *_HOSTS,
+        *_IPSET_EXCL,  # ipset-exclude и здесь - как в ALT9 (v4)
         *_QUIC_TECH_COMBO,
         # 2. Discord-голос / STUN (звонки)
         "--new",
@@ -320,6 +339,7 @@ def _combo_chain() -> list[str]:
         "--new",
         "--filter-tcp=80,443",
         *_HOSTS,
+        *_IPSET_EXCL,  # как в ALT9 (v4)
         *_hfs("ozon.ru", "ts,md5sig", 4),
         # 6. ipset: QUIC по IP (заглушка, см. ipset-all.txt)
         "--new",

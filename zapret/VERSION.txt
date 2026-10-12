@@ -14,6 +14,10 @@
 #   сгенерированы СВОИМ скриптом tools/zapret/gen_payloads.py
 #   (детерминированно: повторный запуск даёт байт-в-байт те же файлы,
 #   эти хэши - эталон).
+#   quic_initial_www_google_com / ACTIVE_DISCORD_UDP / ACTIVE_GAME_UDP -
+#   скопированы из рабочего пакета zapret-discord (эталон пользователя,
+#   вживую грузит демки экрана; исходный пакет НЕ изменялся - хэши
+#   байт-в-байт совпадают с источником).
 a14bff1df6234ea555d2e0c61b589f0707c0b12d6c9b7eeccda76012154996e8  winws.exe
 103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b  cygwin1.dll
 c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2  WinDivert.dll
@@ -22,3 +26,6 @@ c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2  WinDivert.dll
 22e0b9151981a7eeceda0488db292b7f112fcadda3df4c473596758506fa13eb  quic-initial-google.bin
 7d618aec12e6ad46bbf3a0319c7542ec275fa773e24d655ec6dfe227a1388151  stun-binding.bin
 0521eb98d9b2e66491c609b65b9265da7bd97e5fa13021f5e94e3733d5400d0a  discord-voice.bin
+2fe18b3bd20807d36704d0b072092ee49ae84edca907a4420ab9a0f0f28fddcf  ACTIVE_DISCORD_UDP.bin
+e065870cb0d13152e6132807bbf42218a9e7cd8d96f5602b61674cc540f3a56e  ACTIVE_GAME_UDP.bin
+f4589c57749f956bb30538197a521d7005f8b0a8723b4707e72405e51ddac50a  quic_initial_www_google_com.bin
