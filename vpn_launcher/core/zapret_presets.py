@@ -7,6 +7,16 @@
 bol-van (см. zapret/VERSION.txt: хэши сверены с официальным
 sha256sum.txt релиза).
 
+v3 (12.10.2026) - КОМБО = РЕПЛИКА ПРОВЕРЕННОЙ КОНФИГУРАЦИИ:
+  Целую ночь (12.10, диагностика rate) ни одна «классическая» техника
+  не снижала ~50% монетку на дискорде (fake, disorder, seqovl, синт-фейки
+  - все ≈ baseline). Рабочая конфигурация из сообщества (zapret-discord,
+  general ALT9) дала 8/8 на discord.com, gateway.discord.gg и youtube,
+  и браузер открыл оба сайта. Ключ - hostfakesplit с fooling=ts,md5sig
+  и подменой хоста на ozon.ru (дискорд-группа) / www.google.com (гугл).
+  Комбо теперь повторяет её профиль в профиль ( QUIC, голос/STUN,
+  медиа-альт-порты, google-группа, основной список, ipset-заглушки).
+
 v2 (12.10.2026) - ПОСТРОЕНИЕ ПРОФИЛЕЙ:
   Профили разделяются --new, наследования НЕТ: у каждого профиля свой
   фильтр + свои списки + свой метод (документация: "Each profile has a
@@ -17,16 +27,13 @@ v2 (12.10.2026) - ПОСТРОЕНИЕ ПРОФИЛЕЙ:
   самодостаточен. Проверяется тестом test_every_profile_self_contained.
 
 Техники TLS-профиля (варьируются между стратегиями):
-  seqovl      - наложение последовательностей (split + overlap + паттерн);
-  fake        - фейковый ClientHello (+ повтор/дробление);
-  disorder    - переупорядочивание сегментов;
-  ts/badseq   - fooling-режимы (подделка timestamp/seq у фейков).
-Каждая стратегия = одна командная строка winws: пять профилей через --new:
-    TLS 443            - варианты техники (здесь отличия между стратегиями);
-    HTTP 80            - seqovl-дробление;
-    QUIC 443           - fake-Initial (google SNI) + повторы;
-    Discord-голос/STUN - fake-Discovery + fake-STUN + повторы;
-    discord.media 8443 - hostfakesplit с подменой SNI (альт-порты звонков).
+  hostfakesplit - дробление с фейковым SNI (в комбо - ПРОВЕРЕННЫЙ победитель);
+  seqovl       - наложение последовательностей (split + overlap + паттерн);
+  fake         - фейковый ClientHello (+ повтор/дробление);
+  disorder     - переупорядочивание сегментов;
+  ts/md5sig    - fooling-режимы (подделка timestamp/md5 у реальных пакетов).
+Каждая стратегия = одна командная строка winws, профили через --new:
+    фильтр + списки + метод в каждом профиле (см. combo и _chain).
 Плейсхолдеры {BIN} и {LISTS} подставляет core.zapret.build_args.
 """
 from __future__ import annotations
@@ -43,20 +50,16 @@ _WF = (
     "--wf-udp=443,19294-19344,50000-50100",
 )
 
-# списки профиля (обязательны в каждом профиле с хост-фильтром)
-_EXCLUDE = ("--hostlist-exclude={LISTS}list-exclude.txt",)
-_HOSTS = ("--hostlist={LISTS}list-general.txt", *_EXCLUDE)
-
-# группы хостов для комбо (диагностика 12.10: fake прошла discord.com и
-# gateway.discord.gg, multidisorder - единственная техника, стабильно
-# снявшая блок с www.youtube.com)
-_DISCORD_DOMAINS = (
-    "--hostlist-domains=discord.com,discord.gg,discordapp.com,"
-    "discordapp.net,discord.media,discordcdn.com,discordstatus.com",
+# списки профиля (обязательны в каждом профиле с хост-фильтром);
+# юзерские файлы редактируются через приложение
+_EXCLUDE = (
+    "--hostlist-exclude={LISTS}list-exclude.txt",
+    "--hostlist-exclude={LISTS}list-exclude-user.txt",
 )
-_GOOGLE_DOMAINS = (
-    "--hostlist-domains=youtube.com,youtube-nocookie.com,"
-    "googlevideo.com,ytimg.com,youtubei.googleapis.com",
+_HOSTS = (
+    "--hostlist={LISTS}list-general.txt",
+    "--hostlist={LISTS}list-general-user.txt",
+    *_EXCLUDE,
 )
 
 # --- общие профили (не меняются между стратегиями) --------------------------
@@ -238,34 +241,98 @@ def _chain(name: str, tls: tuple[str, ...]) -> list[str]:
     ]
 
 
-def _combo_chain() -> list[str]:
-    """Комбо: TLS-профили по группам хостов (живая диагностика 12.10).
+def _hfs(host: str, fooling: str, repeats: int) -> tuple[str, ...]:
+    """hostfakesplit - дробление ClientHello с фейковым SNI из списка.
 
-    discord-группа: fake - прошла discord.com и gateway.discord.gg;
-    google-группа: multidisorder - единственная техника, которая стабильно
-    снимала блок с www.youtube.com (4/4 прогона проб под winws). Смысл
-    комбо - РАЗНЫЕ техники для групп, общий хост-список тут не выигрывает.
-    cdn.discordapp.com исключён из десинка: под фейком он умирал (2/2),
-    а прямой путь через ротацию IP проходит - пусть идёт напрямую.
+    Победитель 12.10: подменённый хост (ozon.ru для дискорда, www.google.com
+    для гугла/медиа) + fooling=ts,md5sig убрали ~50% «монетку» убийства
+    хендшейков, над которой бессильны fake/disorder/seqovl/синт-фейки."""
+    return (
+        "--dpi-desync=hostfakesplit",
+        f"--dpi-desync-repeats={repeats}",
+        f"--dpi-desync-fooling={fooling}",
+        f"--dpi-desync-hostfakesplit-mod=host={host}",
+    )
+
+
+_QUIC_TECH_COMBO = (
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=6",
+    f"--dpi-desync-fake-quic={_FAKE_QUIC}",
+)
+
+# голос/стун: фейк Discord Voice Discovery (для стуна - тот же файл,
+# как в проверенной конфигурации-источнике)
+_VOICE_TECH_COMBO = (
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=6",
+    f"--dpi-desync-fake-discord={_FAKE_DISCORD}",
+    f"--dpi-desync-fake-stun={_FAKE_DISCORD}",
+)
+
+# профили по ipset (пусто по умолчанию - для провайдеров, блокирующих по IP;
+# юзер может заполнить ipset-all.txt своими адресами)
+_EXCL_IPSET = (
+    "--hostlist-exclude={LISTS}list-exclude.txt",
+    "--hostlist-exclude={LISTS}list-exclude-user.txt",
+    "--ipset-exclude={LISTS}ipset-exclude.txt",
+    "--ipset-exclude={LISTS}ipset-exclude-user.txt",
+)
+
+
+def _combo_chain() -> list[str]:
+    """Комбо = реплика проверенной рабочей конфигурации (v3, 12.10.2026).
+
+    Источник: zapret-discord «general (ALT9)» - батник, подтверждённый
+    пользователем как «работает отлично» и перепроверенный нами вживую:
+    под ним discord.com 8/8, gateway.discord.gg 8/8, youtube 8/8, браузер
+    открывает оба сайта (все прежние техники давали лишь ~50% на дискорде).
+    Структура профиль-в-профиль: QUIC, голос/STUN, медиа-альт-порты,
+    google-группа (list-google, ip-id=zero), основной список 80+443,
+    ipset-заглушки (UDP/TCP) для провайдеров с блокировкой по IP.
     """
     return [
         "--comment=vpl-combo",
         *_WF,
-        # 1. Discord и прочие / TLS 443: фейк google-ClientHello
-        "--filter-tcp=443",
-        "--filter-l7=tls",
-        *_DISCORD_DOMAINS,
-        "--hostlist-exclude-domains=cdn.discordapp.com",
+        # 1. QUIC 443 (HTTP/3: youtube и все h3-хосты списка)
+        "--filter-udp=443",
+        "--filter-l7=quic",
+        *_HOSTS,
+        *_QUIC_TECH_COMBO,
+        # 2. Discord-голос / STUN (звонки)
+        "--new",
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun",
+        *_VOICE_TECH_COMBO,
+        # 3. discord.media на альт-портах (стримы/звонки не на 443)
+        "--new",
+        "--filter-tcp=2053,2083,2087,2096,8443",
+        "--hostlist-domains=discord.media",
         *_EXCLUDE,
-        *_tls_fake(),
-        # 2. Google/YouTube / TLS 443: переупорядочивание сегментов
+        *_hfs("www.google.com", "ts", 4),
+        # 4. Google/YouTube группа - свой список, нулевой ip-id
         "--new",
         "--filter-tcp=443",
-        "--filter-l7=tls",
-        *_GOOGLE_DOMAINS,
-        *_EXCLUDE,
-        *_tls_disorder(),
-        *_tail(),
+        "--hostlist={LISTS}list-google.txt",
+        "--ip-id=zero",
+        *_hfs("www.google.com", "ts", 4),
+        # 5. Основной список (дискорд и прочее) 80+443
+        "--new",
+        "--filter-tcp=80,443",
+        *_HOSTS,
+        *_hfs("ozon.ru", "ts,md5sig", 4),
+        # 6. ipset: QUIC по IP (заглушка, см. ipset-all.txt)
+        "--new",
+        "--filter-udp=443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_QUIC_TECH_COMBO,
+        # 7. ipset: TCP 80/443/8443 по IP (заглушка)
+        "--new",
+        "--filter-tcp=80,443,8443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_hfs("ozon.ru", "ts", 4),
     ]
 
 

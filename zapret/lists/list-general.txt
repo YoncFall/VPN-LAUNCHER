@@ -1,18 +1,76 @@
-# VPN LAUNCHER - список целей обхода (наш собственный).
-# Один хост на строку, поддомены применяются автоматически (правила winws).
-# Пользовательские добавки - в list-general-user.txt (не пакуется в релиз).
+# VPN LAUNCHER - list of hosts to bypass DPI (edit with care).
+# One domain per line; lines starting with # are comments.
+# Your own entries go to list-general-user.txt (edited via the app).
 
-# Discord (сайт, голосовые серверы, CDN)
-discord.com
-discord.gg
-discordapp.com
-discordapp.net
-discord.media
+# DNS-over-HTTPS providers (must keep working when DPI breaks DNS)
+^dns.google
+^dns.quad9.net
+^dns.nextdns.io
+^doh.opendns.com
+^doh.cleanbrowsing.org
+^freedns.controld.com
+^wikimedia-dns.org
+^cloudflare-dns.com
+
+# Cloudflare infrastructure (ECH, challenge pages, status)
+cloudflare-ech.com
+encryptedsni.com
+cloudflareaccess.com
+cloudflareapps.com
+cloudflarebolt.com
+cloudflareclient.com
+cloudflareinsights.com
+cloudflareok.com
+cloudflarepartners.com
+cloudflareportal.com
+cloudflarepreview.com
+cloudflareresolve.com
+cloudflaressl.com
+cloudflarestatus.com
+cloudflarestorage.com
+cloudflarestream.com
+cloudflaretest.com
+cloudfront.net
+
+# Discord (main, servers, CDN, marketing, status)
+dis.gd
+discord-attachments-uploads-prd.storage.googleapis.com
+discord.app
 discord.co
+discord.com
+discord.design
+discord.dev
+discord.gift
+discord.gifts
+discord.gg
+discord.media
 discord.new
 discord.store
+discord.status
+discord-activities.com
+discordactivities.com
+discordapp.com
+discordapp.net
+discordcdn.com
+discordmerch.com
+discordpartygames.com
+discordsays.com
+discordsez.com
+discordstatus.com
+zendesk.com
 
-# YouTube и его CDN
+# Stream extensions and helpers
+frankerfacez.com
+ffzap.com
+betterttv.net
+7tv.app
+7tv.io
+localizeapi.com
+klipy.com
+live-video.net
+
+# YouTube (also covered by list-google.txt; kept here so strategies
+# that use only list-general still reach youtube)
 youtube.com
 youtu.be
 youtube-nocookie.com

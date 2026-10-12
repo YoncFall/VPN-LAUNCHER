@@ -1479,6 +1479,12 @@ class TestZapret:
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
         assert (LISTS_DIR / "list-general.txt").exists()
+        # списки проверенной конфигурации (v3): google-группа + ipset-заглушки
+        for fname in ("list-google.txt", "list-exclude.txt",
+                      "list-general-user.txt", "list-exclude-user.txt",
+                      "ipset-all.txt", "ipset-exclude.txt",
+                      "ipset-exclude-user.txt"):
+            assert (LISTS_DIR / fname).exists(), fname
         for p in PRESETS:
             assert any(a.startswith("--dpi-desync") for a in p["args"])
             assert any(a.startswith("--wf-tcp=") for a in p["args"])
@@ -1497,7 +1503,8 @@ class TestZapret:
         «голом» профиле №1 без метода - он перехватывал целевые хосты
         раньше профилей с методами, и обход не срабатывал вообще,
         хотя winws работал (документация: профили самодостаточны,
-        наследования нет)."""
+        наследования нет). v3: у combo 7 профилей (реплика рабочей
+        конфигурации: QUIC, голос, медиа, гугл, основной, 2x ipset)."""
         from vpn_launcher.core.zapret_presets import PRESETS
 
         for preset in PRESETS:
@@ -1507,8 +1514,7 @@ class TestZapret:
                     profiles.append([])
                 else:
                     profiles[-1].append(a)
-            # у комбо два TLS-профиля (по группам хостов) - шесть всего
-            expected = 6 if preset["name"] == "combo" else 5
+            expected = 7 if preset["name"] == "combo" else 5
             assert len(profiles) == expected, preset["name"]
             for i, prof in enumerate(profiles):
                 assert any(a.startswith("--dpi-desync=") for a in prof), (
@@ -1518,19 +1524,23 @@ class TestZapret:
                     a.startswith("--filter-tcp=") or a.startswith("--filter-udp=")
                     for a in prof
                 ), f"{preset['name']} profile#{i}: нет фильтра"
-            # TLS-профиль обязан целиться списком хостов, а не ловить всё
-            tls_prof = profiles[0]
+            # TLS-профиль (443) обязан целиться списком хостов, а не ловить
+            # всё; у combo он не первый (впереди QUIC и голос)
+            tls_profs = [p for p in profiles if "--filter-tcp=443" in p]
+            assert tls_profs, preset["name"]
+            tls_prof = tls_profs[0]
             assert any(
                 a.startswith("--hostlist=") or a.startswith("--hostlist-domains=")
                 for a in tls_prof
             )
-            assert "--filter-tcp=443" in tls_prof
 
     def test_combo_first_with_per_group_techniques(self):
-        """12.10 (живая диагностика под winws): combo - ПЕРВАЯ стратегия.
-        TLS разбит на две группы хостов с РАЗНЫМИ техниками - в этом её
-        смысл: discord=fake прошла discord.com+gateway.discord.gg,
-        google=disorder - единственная техника, снявшая блок с youtube."""
+        """v3 (12.10, ночная диагностика rate + проверка вживую): combo -
+        ПЕРВАЯ стратегия и реплика проверенной рабочей конфигурации.
+        Победитель: hostfakesplit с fooling=ts,md5sig и подменой хоста
+        (ozon.ru для дискорд-группы, www.google.com для гугла/медиа) -
+        он снял ~50% «монетку» убийства хендшейков дискорда, над которой
+        бессильны fake/disorder/seqovl/синт-фейки (все ≈ baseline)."""
         from vpn_launcher.core.zapret import build_args, preset_names
         from vpn_launcher.core.zapret_presets import PRESETS
 
@@ -1542,17 +1552,28 @@ class TestZapret:
                 profiles.append([])
             else:
                 profiles[-1].append(a)
-        discord_prof, google_prof = profiles[0], profiles[1]
-        assert "--filter-l7=tls" in discord_prof
-        assert "--filter-l7=tls" in google_prof
-        assert any(a.startswith("--hostlist-domains=discord") for a in discord_prof)
-        assert any("youtube" in a for a in google_prof)
-        # cdn исключён из десинка: под фейком он умирал, прямой путь проходит
-        assert "--hostlist-exclude-domains=cdn.discordapp.com" in discord_prof
-        discord_tech = [a for a in discord_prof if a.startswith("--dpi-desync=")]
-        google_tech = [a for a in google_prof if a.startswith("--dpi-desync=")]
-        assert discord_tech == ["--dpi-desync=fake"]
-        assert google_tech == ["--dpi-desync=multidisorder"]
+        assert len(profiles) == 7  # QUIC, голос, медиа, гугл, осн., 2xipset
+        quic, voice, media, google, main = profiles[:5]
+        # QUIC и голос
+        assert "--filter-udp=443" in quic
+        assert any(a.startswith("--dpi-desync-fake-quic=") for a in quic)
+        assert "--filter-l7=discord,stun" in voice
+        assert any(a.startswith("--dpi-desync-fake-discord=") for a in voice)
+        # google-группа: свой список + нулевой ip-id
+        assert "--hostlist={LISTS}list-google.txt" in google
+        assert "--ip-id=zero" in google
+        # основной профиль (дискорд): ключевые аргументы победителя
+        assert "--filter-tcp=80,443" in main
+        assert "--dpi-desync=hostfakesplit" in main
+        assert "--dpi-desync-fooling=ts,md5sig" in main
+        assert "--dpi-desync-hostfakesplit-mod=host=ozon.ru" in main
+        assert "--dpi-desync-repeats=4" in main
+        # медиа-альт-порты тоже на hostfakesplit
+        assert "--hostlist-domains=discord.media" in media
+        assert "--dpi-desync=hostfakesplit" in media
+        # ipset-профили ссылаются на пустой по умолчанию файл
+        assert any(a.startswith("--ipset={LISTS}ipset-all.txt") for a in
+                   profiles[5] + profiles[6])
         # плейсхолдеры подставлены
         for a in build_args("combo"):
             assert "{BIN}" not in a and "{LISTS}" not in a
