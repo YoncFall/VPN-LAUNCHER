@@ -443,6 +443,13 @@ class MainWindow(QWidget):
             # set_state гасит и пульсацию (led._tick останавливает таймер)
             led.set_state("off")
         self.btn_zapret.set_active(running)
+        # самовосстановление: если плашку куда-то убрало (фулскрин-игра,
+        # дроп z-order) - вернуть, пока главное окно видимо
+        if not self.isHidden() and not self.isMinimized():
+            if not self.btn_zapret.isVisible():
+                self._place_rocket()
+                self.btn_zapret.show()
+                self.btn_zapret.raise_()
 
     def moveEvent(self, e) -> None:  # noqa: N802
         # плашка-ракета ездит вместе с окном (просьба 12.10)
@@ -450,21 +457,32 @@ class MainWindow(QWidget):
         self._place_rocket()
 
     def changeEvent(self, e) -> None:  # noqa: N802
-        # свернули - прячем ракету, развернули - возвращаем на место
+        # свернули - прячем ракету, развернули - возвращаем на место;
+        # после фулскрин-игры плашка могла уйти за другие окна -
+        # при всплытии/активации главного окна поднимаем её вместе с ним
         super().changeEvent(e)
-        if e.type() == QEvent.Type.WindowStateChange:
+        t = e.type()
+        if t == QEvent.Type.WindowStateChange:
             if self.isMinimized():
                 self.btn_zapret.hide()
             elif not self.isHidden():
                 self._place_rocket()
                 self.btn_zapret.show()
+        elif t == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._place_rocket()
+            self.btn_zapret.show()
+            self.btn_zapret.raise_()
 
     def _zapret_click(self) -> None:
-        """ЛКМ «Обход DPI»: вкл/выкл; без сохранённой стратегии - автоподбор."""
+        """ЛКМ «Обход DPI»: вкл/выкл; без сохранённой стратегии - автоподбор.
+
+        12.10 (просьба): тексты про обход убраны из строки статуса -
+        состояние показывают лампа DPI и ракета (ok/warn/off); строка
+        осталась для VPN и редких ошибок запуска.
+        """
         if self._zapret.running():
             self._zapret.stop()
             self._zapret_sync()
-            self._status("Обход блокировок выключен", theme.TEXT_DIM)
             return
         if not is_elevated():
             self._zapret_elevate()
@@ -477,7 +495,6 @@ class MainWindow(QWidget):
                 self._status(f"Не удалось запустить обход: {exc}", theme.DANGER)
                 return
             self._zapret_sync()
-            self._status(f"Обход блокировок включён: {strategy}", theme.ACCENT2)
         else:
             self._zapret_pick()
 
@@ -485,9 +502,8 @@ class MainWindow(QWidget):
         # winws требует админ-прав (WinDivert-драйвер): перезапускаем
         # приложение повышенным с продолжением --autozapret - механика
         # та же, что у --autoconnect (см. _connect_click, 2.1.4)
-        self._status("Нужны права администратора...", theme.WARN)
         self.btn_zapret.setEnabled(False)
-        self._zapret_sync()  # лампа DPI - warn (идёт подбор/повышение)
+        self._zapret_sync()  # лампа DPI - warn (повышение прав)
         QApplication.processEvents()
         ready = create_window_shown_event()
         try:
@@ -496,16 +512,14 @@ class MainWindow(QWidget):
         except OSError as exc:
             release_window_shown_event(ready)
             if "UAC cancelled" in str(exc):
+                # отмена UAC - не ошибка: тихо возвращаем кнопку
                 write_log("zapret: elevation cancelled by user")
-                self._status("Отменено - обход не запущен", theme.DANGER)
             else:
                 self._status(
                     "Не удалось получить права администратора", theme.DANGER
                 )
             self.btn_zapret.setEnabled(True)
             return
-        self._status("Запуск с правами администратора...")
-        QApplication.processEvents()
         if ready is not None:
             wait_window_shown(
                 ready, timeout_ms=15000, pump=lambda: QApplication.processEvents()
@@ -522,9 +536,8 @@ class MainWindow(QWidget):
             self._zapret.stop()
         write_log("zapret: autotest worker starting")
         self.btn_zapret.setEnabled(False)
-        self._status("Подбор обхода...", theme.WARN)
+        self._zapret_sync()  # лампа DPI - warn+пульс (идёт подбор)
         self._zapret_worker = ZapretWorker(self._zapret)
-        self._zapret_worker.progress.connect(lambda t: self._status(t, theme.WARN))
         self._zapret_worker.done.connect(self._zapret_done)
         self._zapret_worker.start()
 
@@ -533,12 +546,12 @@ class MainWindow(QWidget):
         write_log(f"zapret: autotest done: winner={name or 'none'} ({msg})")
         if name:
             # выигравшая стратегия остаётся запущенной (run_autotest не
-            # гасит её) и запоминается: следующий ЛКМ - включение с неё
+            # гасит её) и запоминается: следующий ЛКМ - включение с неё;
+            # молча - её показывает зелёная лампа DPI
             self.state["zapretStrategy"] = name
             save_state(self.state)
-            self._status(msg, theme.ACCENT2)
         else:
-            self._status(msg, theme.DANGER)
+            self._status(msg, theme.DANGER)  # «ничего не подошло» - ошибка
         self._zapret_sync()  # лампа/ракета сразу отражают итог подбора
 
     def _zapret_autostart(self) -> None:
