@@ -1547,6 +1547,8 @@ class TestZapret:
         assert "--filter-l7=tls" in google_prof
         assert any(a.startswith("--hostlist-domains=discord") for a in discord_prof)
         assert any("youtube" in a for a in google_prof)
+        # cdn исключён из десинка: под фейком он умирал, прямой путь проходит
+        assert "--hostlist-exclude-domains=cdn.discordapp.com" in discord_prof
         discord_tech = [a for a in discord_prof if a.startswith("--dpi-desync=")]
         google_tech = [a for a in google_prof if a.startswith("--dpi-desync=")]
         assert discord_tech == ["--dpi-desync=fake"]
@@ -1697,8 +1699,8 @@ class TestZapret:
 
     def test_probe_retries_flaky_url(self, monkeypatch):
         """12.10: сеть мигает (anycast-IP блокируются избирательно) - один
-        мёртвый прогон URL не должен обваливать стратегию, второй проход
-        спасает; при этом стабильная недоступность недоступностью и
+        мёртвый прогон URL не должен обваливать стратегию, повторные проходы
+        спасают; при этом стабильная недоступность недоступностью и
         остаётся (проверено в test_probe_fails_on_5xx_and_transport)."""
         from vpn_launcher.core import zapret as zmod
 
@@ -1706,16 +1708,15 @@ class TestZapret:
 
         def flaky(url, timeout):
             calls.append(url)
-            if len(calls) == 1:
+            if len(calls) <= 2:
                 raise TimeoutError("handshake timed out")
             return 200
 
         monkeypatch.setattr(zmod, "_fetch", flaky)
         assert zmod.probe() is True
-        # первый URL ушёл дважды (упал - повторился - прошёл), остальные
-        # по одному разу
-        assert calls[0] == calls[1] == zmod.PROBE_URLS[0]
-        assert len(calls) == len(zmod.PROBE_URLS) + 1
+        # первый URL ушёл трижды (упал-упал-прошёл), остальные по одному разу
+        assert calls[0] == calls[1] == calls[2] == zmod.PROBE_URLS[0]
+        assert len(calls) == len(zmod.PROBE_URLS) + 2
 
     def test_probe_youtube_checked_first(self):
         """youtube - стабильный дискриминатор (без обхода режется всегда,

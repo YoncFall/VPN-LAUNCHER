@@ -245,6 +245,8 @@ def _combo_chain() -> list[str]:
     google-группа: multidisorder - единственная техника, которая стабильно
     снимала блок с www.youtube.com (4/4 прогона проб под winws). Смысл
     комбо - РАЗНЫЕ техники для групп, общий хост-список тут не выигрывает.
+    cdn.discordapp.com исключён из десинка: под фейком он умирал (2/2),
+    а прямой путь через ротацию IP проходит - пусть идёт напрямую.
     """
     return [
         "--comment=vpl-combo",
@@ -253,6 +255,7 @@ def _combo_chain() -> list[str]:
         "--filter-tcp=443",
         "--filter-l7=tls",
         *_DISCORD_DOMAINS,
+        "--hostlist-exclude-domains=cdn.discordapp.com",
         *_EXCLUDE,
         *_tls_fake(),
         # 2. Google/YouTube / TLS 443: переупорядочивание сегментов
