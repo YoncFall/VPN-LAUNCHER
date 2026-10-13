@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QWidget
@@ -155,16 +155,15 @@ class WebWindow(QWidget):
 
     # ---- окно ------------------------------------------------------------
     def paintEvent(self, e) -> None:  # noqa: N802
-        """Фон окна: невидимый слой, перехватывающий клики.
+        """Фон окна: ничего не рисуем.
 
-        Видимая часть (карточка, свечение, кайма) рисуется страницей - ровно
-        как в макете; собственного ореола у окна нет.
+        Видимая часть (карточка, свечение, кайма) - страница, ровно как в
+        макете. Пустое поле вокруг остаётся с нулевой альфой, поэтому клики
+        по прозрачному уходят СКВОЗЬ окно на рабочий стол/игру (просьба
+        13.10); раньше здесь стоял невидимый слой alpha=1, который эти
+        клики перехватывал.
         """
-        p = QPainter(self)
-        # alpha=1: поля невидимы, но Windows не пропускает по ним мышь
-        # (сквозь слоёное окно уходят только пиксели с нулевой альфой)
-        p.fillRect(self.rect(), QColor(10, 13, 18, 1))
-        p.end()
+        super().paintEvent(e)
 
     def begin_drag(self, screen_x: int, screen_y: int) -> None:
         g = self.pos()

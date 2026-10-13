@@ -11,6 +11,11 @@ import os
 import re
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# WebWindow в тестах должен рисоваться без GPU (offscreen иначе теряет контекст)
+os.environ.setdefault(
+    "QTWEBENGINE_CHROMIUM_FLAGS",
+    "--disable-gpu --disable-gpu-compositing --no-sandbox",
+)
 
 import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -154,14 +159,62 @@ def test_page_js_calls_bridge():
 
 
 def test_page_keeps_mockup_glow():
-    """Свечение/кайма - ровно из макета, мы их не отключаем (13.10)."""
+    """Неоновая кайма из макета жива, а клик по прозрачному проходит сквозь.
+
+    13.10 (просьба): тень карточки 0 18px 55px рисовала по полям
+    полупрозрачную подложку - окно ловило клики. Она отключена (только
+    тень, кайма ::before с blur 9px осталась).
+    """
     from vpn_launcher.ui.web.window import assets_dir
 
     html = (assets_dir() / "app.html").read_text(encoding="utf-8")
-    assert "box-shadow: none !important" not in html
-    assert "0 18px 55px rgba(0,0,0,.42)" in html  # тень окна из макета
+    assert "#window { box-shadow: none !important; }" in html
     assert "#window::before" in html  # неоновая кайма на месте
+    assert "filter: blur(9px)" in html
     assert "display: none !important" not in html
+
+
+def test_window_margin_is_click_through(qapp):
+    """Поля вокруг карточки прозрачны (alpha=0) -> клик идёт на рабочий стол.
+
+    Карточка при этом непрозрачна - по ней клики ловятся как раньше.
+    """
+    import time
+
+    from vpn_launcher.ui.window import MainWindow
+    from vpn_launcher.ui.web.window import PAGE_H, PAGE_W, WebWindow
+
+    win = MainWindow()
+    view = WebWindow(win)
+    view.show()
+    try:
+        img = None
+        deadline = time.monotonic() + 12.0
+        while time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.2)
+            img = view.grab().toImage()
+            # ждём, пока страница отрисуется (карточка станет плотной)
+            if img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha() > 200:
+                break
+        assert img is not None and img.width() == PAGE_W
+        for name, x, y in (
+            ("край окна", 6, 6),
+            ("поле сверху", PAGE_W // 2, 18),
+            ("поле слева", 18, PAGE_H // 2),
+            # справа берём выше плашки DPI (она висит на середине правого поля
+            # и обязана ловить свои клики, а её полупрозрачная тень - нет)
+            ("поле справа", PAGE_W - 18, PAGE_H // 4),
+            ("поле снизу", PAGE_W // 2, PAGE_H - 18),
+        ):
+            a = img.pixelColor(x, y).alpha()
+            assert a == 0, f"{name} ({x},{y}): alpha={a}, клик не пройдёт сквозь"
+        assert img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha() == 255
+    finally:
+        win.btn_zapret.close()
+        win.close()
+        view.close()
+        qapp.processEvents()
 
 
 def test_app_mode_values_match_backend():
