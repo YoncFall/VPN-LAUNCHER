@@ -6,12 +6,14 @@
 в отдельном frameless-окне (дочерним к главному не делаем: ребёнок не
 может вылезать за границы родителя - обрезался бы), ездит за главным
 окном (window.py: moveEvent/showEvent -> attach_to), гаснет при
-сворачивании. Поведение прежнее: ЛКМ - вкл/выкл, ПКМ - автоподбор;
-когда обход работает - рамка, ореол и подпись горят зелёным.
+сворачивании. Поведение прежнее: ЛКМ - вкл/выкл, ПКМ - автоподбор.
 
-Ракета - векторная (как GameButton/Led, без эмодзи: глиф не у всех
-шрифтов есть): светлый корпус, циан-иллюминатор (ACCENT), пламя
-зелёное (ACCENT2), пока обход работает, тусклое - когда нет.
+Вид (макет #rocket, 13.10): плоский левый край вплотную к рамке окна
+(GLUE_PX=2), скруглены только правые углы (радиус 10); когда обход
+работает - рамка, ореол и подпись горят фиолетовым (#b06aff), иначе
+нейтральный тёмный (#17212e -> #101720). Ракета - векторная (без
+эмодзи): светлый корпус, иллюминатор акцентный, пламя фиолетовое при
+работающем обходе, тусклое - когда нет.
 """
 from __future__ import annotations
 
@@ -23,8 +25,13 @@ from PySide6.QtWidgets import QWidget
 from vpn_launcher.ui import theme
 
 W, H = 64, 92       # размер плашки целиком
-GLUE_PX = 14        # сколько px перекрывает окно (ровно ширина поля)
-TOP_PX = 300        # отступ сверху от верха главного окна
+GLUE_PX = 2         # сколько px перекрывает окно (макет: вплотную к краю)
+TOP_PX = 388        # отступ сверху от верха главного окна (~51%, макет)
+
+_ACTIVE = QColor(176, 106, 255)       # #b06aff рамка/ореол при работе обхода
+_ACTIVE_TEXT = QColor(215, 181, 255)  # #d7b5ff подпись DPI
+_ACTIVE_BG_TOP = QColor(48, 32, 71)   # #302047
+_ACTIVE_BG_BOT = QColor(27, 20, 40)   # #1b1428
 
 
 class RocketButton(QWidget):
@@ -100,9 +107,9 @@ class RocketButton(QWidget):
         on = self.isEnabled()
         active = on and self._active
 
-        if active:  # мягкий зелёный ореол, пока обход работает
+        if active:  # мягкий фиолетовый ореол, пока обход работает
             glow = QRadialGradient(QPointF(w / 2, h / 2), (w + h) / 4)
-            halo = QColor(theme.ACCENT2)
+            halo = QColor(_ACTIVE)
             halo.setAlpha(70)
             glow.setColorAt(0.0, halo)
             halo.setAlpha(0)
@@ -111,34 +118,51 @@ class RocketButton(QWidget):
             p.setBrush(glow)
             p.drawEllipse(QRectF(-6, -6, w + 12, h + 12))
 
-        if not on:
-            top, bottom, br = (23, 26, 34), (19, 21, 28), (40, 44, 56)
+        if active:  # вид макета #rocket.active
+            top, bottom, br = (48, 32, 71), (27, 20, 40), (176, 106, 255)
+        elif not on:
+            top, bottom, br = (23, 33, 46), (16, 23, 32), (52, 66, 86)
         elif self._hover:
-            top, bottom, br = (31, 37, 50), (25, 29, 40), (72, 82, 108)
+            top, bottom, br = (28, 40, 56), (20, 29, 40), (82, 113, 143)
         else:
-            top, bottom, br = (27, 31, 42), (21, 24, 32), (46, 52, 68)
+            top, bottom, br = (23, 33, 46), (16, 23, 32), (52, 66, 86)
         grad = QLinearGradient(0, 0, 0, h)
         grad.setColorAt(0.0, QColor(*top))
         grad.setColorAt(1.0, QColor(*bottom))
+
+        # форма макета: плоский левый край (вплотную к окну), скруглены
+        # только правые углы (радиус 10)
+        rr = 10.0
+        left, top_y, right, bot_y = 1.5, 1.5, w - 1.5, h - 1.5
+        path = QPainterPath()
+        path.moveTo(left, top_y)
+        path.lineTo(right - rr, top_y)
+        path.arcTo(QRectF(right - 2 * rr, top_y, 2 * rr, 2 * rr), 90, -90)
+        path.lineTo(right, bot_y - rr)
+        path.arcTo(QRectF(right - 2 * rr, bot_y - 2 * rr, 2 * rr, 2 * rr), 0, -90)
+        path.lineTo(left, bot_y)
         p.setBrush(grad)
-        p.setPen(QPen(QColor(theme.ACCENT2) if active else QColor(*br),
-                      1.4 if active else 1.0))
-        p.drawRoundedRect(QRectF(1.5, 1.5, w - 3, h - 3), 16, 16)
+        p.setPen(QPen(QColor(*br), 1.4 if active else 1.0))
+        p.fillPath(path, grad)
+        p.drawPath(path)
+        # левый край - отдельной линией (#40536b у макета)
+        p.setPen(QPen(QColor(64, 83, 107), 1.0))
+        p.drawLine(QPointF(left, top_y), QPointF(left, bot_y))
 
         self._paint_rocket(p, on, active)
 
         p.setFont(self._caps)
         if active:
-            p.setPen(QColor(theme.ACCENT2))
+            p.setPen(QColor(_ACTIVE_TEXT))
         elif on:
-            p.setPen(QColor(230, 234, 242) if self._hover else theme.TEXT_DIM)
+            p.setPen(QColor(199, 227, 255) if self._hover else theme.TEXT_DIM)
         else:
             p.setPen(theme.MUTED)
         p.drawText(QRectF(0, 50, w, 30), Qt.AlignmentFlag.AlignCenter, "DPI")
 
     def _paint_rocket(self, p: QPainter, on: bool, active: bool) -> None:
-        """Векторная ракета в стиле UI (светлый корпус, циан-иллюминатор,
-        зелёное пламя при работающем обходе; всё - как виджеты рисуют)."""
+        """Векторная ракета в стиле UI (светлый корпус, акцентный иллюминатор,
+        фиолетовое пламя при работающем обходе; всё - как виджеты рисуют)."""
         outline = QPen(QColor(23, 27, 36), 1.0)
         p.setPen(outline)
         if on:
@@ -148,7 +172,7 @@ class RocketButton(QWidget):
 
         # пламя (за корпусом)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme.ACCENT2) if active else QColor(74, 82, 100))
+        p.setBrush(QColor(_ACTIVE) if active else QColor(74, 82, 100))
         fp = QPainterPath()
         fp.moveTo(29.5, 36)
         fp.quadTo(32, 43 if active else 40, 34.5, 36)

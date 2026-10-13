@@ -15,24 +15,24 @@ from PySide6.QtWidgets import QLineEdit
 
 from vpn_launcher.ui import theme
 
-_RADIUS = 7
+_RADIUS = 6
 
 
 def _qss() -> str:
     return f"""
-QLineEdit {{
-    background-color: #13161E;
-    border: 1px solid #3A4256;
-    border-radius: {_RADIUS}px;
-    padding: 0 12px;
-    color: #E6EAF2;
-    font: 9pt "{theme.family()}";
-    selection-background-color: #0096BE;
-    selection-color: #031A22;
-}}
-QLineEdit:hover {{ border-color: #606C8A; }}
-QLineEdit:focus {{ border-color: #00C8F0; }}
-"""
+    QLineEdit {{
+        background-color: #0B1017;
+        border: 1px solid #303B4A;
+        border-radius: {_RADIUS}px;
+        padding: 0 10px;
+        color: #DFE8F4;
+        font: 9pt "{theme.family()}";
+        selection-background-color: #7651C5;
+        selection-color: #FFFFFF;
+    }}
+    QLineEdit:hover {{ border-color: #46556A; }}
+    QLineEdit:focus {{ border-color: #A783FF; }}
+    """
 
 
 class GameField(QLineEdit):

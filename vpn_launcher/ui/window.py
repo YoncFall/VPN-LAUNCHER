@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Главное окно. Раскладка - точный порт VPN.ps1:84-222 (карточка 14,54,592x664).
+"""Главное окно. Раскладка и вид - по макету GPT «Cyber Purple» (13.10.2026).
 
-Вид: тёмно-синий градиентный фон (Bg2->Bg), скруглённые углы 12 (как
-Install-GameCorners), шапка с неоновым логотипом, градиентные линии
-(кант шапки, подчёркивание, полоска карточки, разделители с акцентной
-точкой). Списки (NeonList в GameFrame, inset 3 как New-GameListBox) и
-пикер (GamePicker) - этап 4.
+Вид: тёмный фон #0a0d12, скруглённые углы 12, фиолетовая рамка окна;
+шапка 62px с brand-mark (щит), логотипом со свечением и byline; четыре
+раздельные секции (ПОДПИСКА/СЕРВЕРЫ/ИСКЛЮЧЕНИЯ/ПОДКЛЮЧЕНИЕ) с промежутком
+9px - их рисует GameCard.set_panels, контроллы лежат на контейнере card
+(координаты относительно него, как и раньше). Режимы TUN/прокси живут в
+секции ПОДКЛЮЧЕНИЕ; лампы VPN и DPI стоят в одной строке статуса; ракета
+DPI - отдельное окно, торчит наружу у правого края.
 
 Логика (этап 5) - порт обработчиков VPN.ps1: загрузка подписки (120-156),
 пинг (379-436), исключения (226-302), подключение/отключение/проверка
 конфига (458-611), таймер 10с (615-641), --autoconnect (655-687), закрытие
 окна (643-651). Отклонения (в комментариях у мест):
   - переключатель режима списка («Всё, кроме списка» / «Только выбранные»,
-    30.09.2026) занял строку заголовка секции ИСКЛЮЧЕНИЯ: хинт про игры
-    описывал только режим exclude, поэтому переехал вниз и стал зависеть
-    от режима (см. _apply_app_mode); геометрия карточки не менялась;
+    30.09.2026) в строке заголовка секции ИСКЛЮЧЕНИЯ; хинт про игры
+    зависит от режима (см. _apply_app_mode);
   - загрузка/пинг/внешний IP идут в QThread - в PS это runspace/DoEvents
     (экран не подвисает, статусы и их порядок те же);
   - при закрытии окна воркеры ждутся до 2с, затем terminate - порт
@@ -38,6 +39,7 @@ from PySide6.QtGui import (
     QLinearGradient,
     QPainter,
     QPainterPath,
+    QPen,
     QRegion,
 )
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
@@ -57,6 +59,7 @@ from vpn_launcher.core.state import load_state, save_state
 from vpn_launcher.core.zapret import ZapretController
 from vpn_launcher.paths import LOG_FILE, install_root
 from vpn_launcher.ui import theme
+from vpn_launcher.ui.icons import Icon
 from vpn_launcher.ui.widgets.button import GameButton
 from vpn_launcher.ui.widgets.card import GameCard
 from vpn_launcher.ui.widgets.divider import Divider
@@ -65,7 +68,7 @@ from vpn_launcher.ui.widgets.frame import GameFrame
 from vpn_launcher.ui.widgets.led import Led
 from vpn_launcher.ui.widgets.neon_list import NeonList
 from vpn_launcher.ui.widgets.picker import GamePicker
-from vpn_launcher.ui.widgets.radio import GameRadio
+from vpn_launcher.ui.widgets.radio import GameRadio, SegmentBox
 from vpn_launcher.ui.widgets.rocket import RocketButton
 from vpn_launcher.ui.widgets.title_bar import TitleBar
 from vpn_launcher.win.elevate import (
@@ -100,11 +103,11 @@ from vpn_launcher.workers import (
     ZapretWorker,
 )
 
-WIN_W, WIN_H = 620, 726
+WIN_W, WIN_H = 620, 852
 WIN_RADIUS = 12  # Install-GameCorners (theme.ps1:1253)
 
-# PS Color.Gray для 'Внешний IP недоступен' (VPN.ps1:639)
-_GRAY = QColor(128, 128, 128)
+# цвет 'Внешний IP недоступен' по макету (#8f9caf; в PS был Color.Gray)
+_GRAY = QColor(143, 156, 175)
 
 # Add-Excl (VPN.ps1:255-256): авто-.exe и валидация имени.
 # PS `-match` регистронезависим - флаг IGNORECASE; `\w` в Python для str юникоден,
@@ -161,6 +164,13 @@ def _label(
         a |= Qt.AlignmentFlag.AlignLeft
     l.setAlignment(a)
     return l
+
+
+def _heading(card: QWidget, icon_name: str, text: str, x: int, y: int, w: int) -> QLabel:
+    """Заголовок секции по макету: векторная иконка + капс-текст (#c5cfdd)."""
+    ic = Icon(icon_name, 14, QColor(188, 162, 255), card)
+    ic.move(x, y + 1)
+    return _label(card, text, x + 18, y, w - 18, 16, theme.HEAD, theme.f_caps())
 
 
 class MainWindow(QWidget):
@@ -228,10 +238,17 @@ class MainWindow(QWidget):
 
     def paintEvent(self, e) -> None:  # noqa: N802
         p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         grad = QLinearGradient(0, 0, 0, WIN_H)
         grad.setColorAt(0.0, theme.BG2)
         grad.setColorAt(1.0, theme.BG)
         p.fillRect(QRectF(0, 0, WIN_W, WIN_H), grad)
+        # фиолетовая рамка окна с мягким внутренним свечением (макет #window)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(87, 65, 125), 1))
+        p.drawRoundedRect(QRectF(0.5, 0.5, WIN_W - 1, WIN_H - 1), WIN_RADIUS, WIN_RADIUS)
+        p.setPen(QPen(QColor(167, 131, 255, 40), 2))
+        p.drawRoundedRect(QRectF(2, 2, WIN_W - 4, WIN_H - 4), 10, 10)
 
     def showEvent(self, e) -> None:  # noqa: N802
         # 2.1.5 (жалоба 01.10 «подписка не скрыта»): при первом показе Qt
@@ -256,28 +273,39 @@ class MainWindow(QWidget):
         self.titlebar = bar
 
         card = GameCard(14, self)
-        card.setGeometry(14, 54, 592, 664)
+        card.setGeometry(14, 62, 592, 778)
         self.card = card
+        # секции-панели по макету (x, y, w, h относительно card): четыре
+        # отдельные карточки с промежутками на фоне окна; контент внутри
+        # колонки 18..574, как и раньше
+        card.set_panels(
+            [
+                (7, 11, 578, 118),   # ПОДПИСКА
+                (7, 138, 578, 230),  # СЕРВЕРЫ
+                (7, 377, 578, 219),  # ИСКЛЮЧЕНИЯ
+                (7, 605, 578, 163),  # ПОДКЛЮЧЕНИЕ
+            ]
+        )
 
         # --- ПОДПИСКА (VPN.ps1:110-118) ---
-        _label(card, "ПОДПИСКА", 18, 12, 300, 16, theme.TEXT_DIM, theme.f_caps())
+        _heading(card, "link", "ПОДПИСКА", 18, 22, 300)
         # 2.1.5: secret=True - вне фокуса поле показывает точки, по клику
         # (или Tab) - настоящий URL и редактирование (просьба 01.10)
         self.field_sub = GameField(
             "", "вставь ссылку на подписку (https://...)", card, secret=True
         )
-        self.field_sub.setGeometry(18, 30, 556, 30)
+        self.field_sub.setGeometry(18, 48, 556, 31)
 
-        # ширины пересчитаны (2.1.3): тексты не влезали в кнопки - drawText
-        # с TextDontClip рисовал их сверху соседями/краем карточки
-        # 2.2.0: кнопка «Обход DPI» встала справа в строке «ПОДПИСКА» (ряд
-        # кнопок остался как в PS: сумма ширин четыре кнопки в 556px не влезла)
-        self.btn_load = GameButton("Загрузить подписку", "ghost", 8, card)
-        self.btn_load.setGeometry(18, 66, 216, 34)
-        self.btn_ping = GameButton("Проверить пинг", "ghost", 8, card)
-        self.btn_ping.setGeometry(240, 66, 172, 34)
-        self.btn_log = GameButton("Открыть лог", "ghost", 8, card)
-        self.btn_log.setGeometry(418, 66, 156, 34)
+        # ширины пересчитаны под тексты (замер f_btn 10px + иконка 18px):
+        # 216/172/152 c гэпами 8 = ровно 556
+        self.btn_load = GameButton(
+            "Загрузить подписку", "ghost", 6, card, icon="download"
+        )
+        self.btn_load.setGeometry(18, 87, 216, 31)
+        self.btn_ping = GameButton("Проверить пинг", "ghost", 6, card, icon="pulse")
+        self.btn_ping.setGeometry(242, 87, 172, 31)
+        self.btn_log = GameButton("Открыть лог", "ghost", 6, card, icon="doc")
+        self.btn_log.setGeometry(422, 87, 152, 31)
         self.btn_log.clicked.connect(self._open_log)
         self.btn_load.clicked.connect(self._load_click)
         self.btn_ping.clicked.connect(self._ping_click)
@@ -291,84 +319,52 @@ class MainWindow(QWidget):
             lambda *_: self._zapret_pick()
         )
 
-        div1 = Divider(card)
-        div1.setGeometry(18, 106, 556, 2)
-
         # --- СЕРВЕРЫ (VPN.ps1:163-172) ---
-        _label(card, "СЕРВЕРЫ", 18, 118, 200, 16, theme.TEXT_DIM, theme.f_caps())
-        # хинт на строке подписи: в коде 1.0.6 он (300,136) перекрывался с
-        # колонкой ПИНГ (480..561) - визуальная коллизия, здесь исправлена
-        # 2.1.3: хинт был 274px при тексте 418px - обрезался слева
+        _heading(card, "globe", "СЕРВЕРЫ", 18, 149, 200)
+        # хинт на строке заголовка (макет .servers-hint), прижат вправо
         _label(
             card, "выбери сервер · пусто — авто-тест всех",
-            110, 118, 464, 16, theme.TEXT_DIM, theme.f_sub(), "right",
+            110, 149, 464, 16, theme.TEXT_DIM, theme.f_sub(), "right",
         )
-        _label(card, "ПРОТОКОЛ", 18, 136, 57, 14, theme.TEXT_DIM, theme.f_caps(), "right")
-        _label(card, "СЕРВЕР", 81, 136, 300, 14, theme.TEXT_DIM, theme.f_caps())
-        _label(card, "ПИНГ", 480, 136, 81, 14, theme.TEXT_DIM, theme.f_caps(), "right")
-        self.frame_servers = GameFrame(10, card)
-        # 2.1.3: 178 -> 164 - 14px ушли вниз, в сегменты режима списка
-        # (h18 читалось полоской); строка 28px: 5 полных + частичная
-        self.frame_servers.setGeometry(18, 152, 556, 164)
+        _label(card, "ПРОТОКОЛ", 18, 171, 57, 14, theme.TEXT_DIM, theme.f_caps(), "right")
+        _label(card, "СЕРВЕР", 81, 171, 300, 14, theme.TEXT_DIM, theme.f_caps())
+        _label(card, "ПИНГ", 480, 171, 81, 14, theme.TEXT_DIM, theme.f_caps(), "right")
+        self.frame_servers = GameFrame(8, card)
+        self.frame_servers.setGeometry(18, 193, 556, 164)
         # список серверов: пинг-колонки, как New-GameListBox -Ping (VPN.ps1:170)
         self.list_servers = NeonList(ping=True, parent=self.frame_servers)
         self.list_servers.setGeometry(3, 3, 556 - 6, 164 - 6)
 
-        div2 = Divider(card)
-        div2.setGeometry(18, 326, 556, 2)
-
-        # --- РЕЖИМ (VPN.ps1:177-185) ---
-        _label(card, "РЕЖИМ", 18, 338, 200, 16, theme.TEXT_DIM, theme.f_caps())
-        # 2.1.3: «(нужен админ)» (341px) не влезало в сегмент - текст и
-        # ширины пересчитаны под оба состояния (выбранное = w-28)
-        self.radio_tun = GameRadio("Весь трафик - TUN (админ)", True, card)
-        self.radio_tun.setGeometry(18, 357, 342, 32)
-        self.radio_proxy = GameRadio("Системный прокси", False, card)
-        self.radio_proxy.setGeometry(366, 357, 208, 32)
-        self.radio_tun.toggled.connect(lambda: self._select_mode("tun"))
-        self.radio_proxy.toggled.connect(lambda: self._select_mode("proxy"))
-
-        div3 = Divider(card)
-        div3.setGeometry(18, 393, 556, 2)
-
-        # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) + режим работы списка (новое, 30.09.2026) ---
-        # Справа в этой строке раньше висел статический хинт «игры, Steam и
-        # античиты исключены автоматически» - он описывал только режим
-        # exclude. Место отдано переключателю (тот же GameRadio, что и в
-        # РЕЖИМ), а зависимый от режима текст переехал в lbl_apps_hint.
-        # 2.1.3 (после правки): заголовок секции вынесен на отдельную
-        # строку, иначе сегменты делили 436px и выглядели узкими; теперь
-        # у каждого ~275px (внутри выбранного = w-28: 246/248 >= текст).
-        # Высота сегментов 32 - как в РЕЖИМ (h18 выглядела полоской по
-        # просьбе 01.10); вертикаль взята у списка серверов (см. выше).
-        # Нижний блок без изменений: подсказка 554..570, div4 на 574.
-        self.lbl_appsec = _label(
-            card, "ИСКЛЮЧЕНИЯ", 18, 396, 556, 16, theme.TEXT_DIM, theme.f_caps()
-        )
+        # --- ИСКЛЮЧЕНИЯ (VPN.ps1:190-205) + режим работы списка ---
+        # Заголовок (в 2.1.3 вынесен на отдельную строку) теперь с иконкой;
+        # под ним «пилюля» SegmentBox с двумя сегментами (как в макете).
+        self.lbl_appsec = _heading(card, "target", "ИСКЛЮЧЕНИЯ", 18, 389, 300)
+        segbox_excl = SegmentBox(card)
+        segbox_excl.setGeometry(15, 405, 562, 38)
         self.radio_excl = GameRadio("Всё, кроме списка", True, card)
-        self.radio_excl.setGeometry(18, 416, 274, 32)
+        self.radio_excl.setGeometry(18, 408, 274, 32)
         self.radio_vpnonly = GameRadio("Только выбранные", False, card)
-        self.radio_vpnonly.setGeometry(298, 416, 276, 32)
+        self.radio_vpnonly.setGeometry(298, 408, 276, 32)
         self.radio_excl.toggled.connect(
             lambda: self._select_app_mode(APP_MODE_EXCLUDE)
         )
         self.radio_vpnonly.toggled.connect(
             lambda: self._select_app_mode(APP_MODE_INCLUDE)
         )
-        self.frame_excl = GameFrame(10, card)
-        self.frame_excl.setGeometry(18, 452, 260, 84)
+        self.frame_excl = GameFrame(8, card)
+        self.frame_excl.setGeometry(18, 449, 273, 111)
         # список исключений: Pad=14 (New-GameListBox ... $false 14, VPN.ps1:193)
         self.list_excl = NeonList(ping=False, pad=14, parent=self.frame_excl)
-        self.list_excl.setGeometry(3, 3, 260 - 6, 84 - 6)
+        self.list_excl.setGeometry(3, 3, 273 - 6, 111 - 6)
         self.picker_proc = GamePicker("выбери процесс или впиши имя .exe", card)
-        self.picker_proc.setGeometry(288, 452, 286, 30)
+        self.picker_proc.setGeometry(298, 449, 276, 31)
 
-        self.btn_add = GameButton("Добавить", "ghost", 8, card)
-        self.btn_add.setGeometry(288, 486, 286, 30)
-        self.btn_del = GameButton("Удалить", "ghost", 8, card)
-        self.btn_del.setGeometry(288, 520, 138, 30)
-        self.btn_clr = GameButton("Очистить", "ghost", 8, card)
-        self.btn_clr.setGeometry(426, 520, 148, 30)
+        self.btn_add = GameButton("Добавить", "ghost", 6, card, icon="plus")
+        self.btn_add.setGeometry(298, 486, 276, 31)
+        self.btn_del = GameButton("Удалить", "ghost", 6, card)
+        self.btn_del.setGeometry(298, 523, 134, 31)
+        self.btn_clr = GameButton("Очистить", "ghost", 6, card)
+        self.btn_clr.setGeometry(440, 523, 134, 31)
         self.btn_add.clicked.connect(self._excl_add)
         self.btn_del.clicked.connect(self._excl_del)
         self.btn_clr.clicked.connect(self._excl_clr)
@@ -378,42 +374,58 @@ class MainWindow(QWidget):
         self.lbl_apps_hint = _label(
             card,
             "Список процессов обновляется при запуске",
-            18, 554, 556, 16, theme.TEXT_DIM, theme.f_sub(),
+            18, 569, 556, 16, theme.TEXT_DIM, theme.f_sub(),
         )
 
-        div4 = Divider(card)
-        div4.setGeometry(18, 574, 556, 2)
+        # --- ПОДКЛЮЧЕНИЕ (VPN.ps1:210-222): режимы + кнопки + статус ---
+        _heading(card, "shield", "ПОДКЛЮЧЕНИЕ", 18, 617, 300)
+        # сегменты режима переехали сюда из секции РЕЖИМ (макет); ширины
+        # неравные: текст «Весь трафик - TUN (админ)» (259px + точка) не
+        # влезал бы в половину строки
+        segbox_mode = SegmentBox(card)
+        segbox_mode.setGeometry(15, 633, 562, 38)
+        self.radio_tun = GameRadio("Весь трафик - TUN (админ)", True, card)
+        self.radio_tun.setGeometry(18, 636, 300, 32)
+        self.radio_proxy = GameRadio("Системный прокси", False, card)
+        self.radio_proxy.setGeometry(324, 636, 250, 32)
+        self.radio_tun.toggled.connect(lambda: self._select_mode("tun"))
+        self.radio_proxy.toggled.connect(lambda: self._select_mode("proxy"))
 
-        # --- подключение (VPN.ps1:210-222) ---
-        # 2.1.3: «Проверить конфиг» (176px) не влезал в 130px - ширины
-        # пересчитаны под тексты, гэпы 10 сохранены
-        self.btn_connect = GameButton("ПОДКЛЮЧИТЬСЯ", "accent", 9, card)
-        self.btn_connect.setGeometry(18, 582, 226, 42)
-        self.btn_disconnect = GameButton("ОТКЛЮЧИТЬ", "danger", 9, card)
-        self.btn_disconnect.setGeometry(254, 582, 118, 42)
+        # ширины кнопок: замер f_btn 10px + иконка 18px, гэпы 8
+        self.btn_connect = GameButton(
+            "ПОДКЛЮЧИТЬСЯ", "accent", 6, card, icon="arrow"
+        )
+        self.btn_connect.setGeometry(18, 676, 190, 38)
+        self.btn_disconnect = GameButton("ОТКЛЮЧИТЬ", "danger", 6, card, icon="stop")
+        self.btn_disconnect.setGeometry(216, 676, 146, 38)
         self.btn_disconnect.setEnabled(False)
-        self.btn_testcfg = GameButton("Проверить конфиг", "ghost", 9, card)
-        self.btn_testcfg.setGeometry(382, 582, 192, 42)
+        self.btn_testcfg = GameButton(
+            "Проверить конфиг", "ghost", 6, card, icon="check"
+        )
+        self.btn_testcfg.setGeometry(370, 676, 204, 38)
         self.btn_connect.clicked.connect(self._connect_click)
         self.btn_disconnect.clicked.connect(self._disconnect_click)
         self.btn_testcfg.clicked.connect(self._testcfg_click)
 
-        # 2.1.3: статус и IP разведены на две строки - статус получил
-        # 530px (было 250, обрезались почти все сообщения), IP ушёл вниз
+        # строка статуса: лампа VPN + текст во всю ширину (530px хватает на
+        # самые длинные сообщения, см. 2.1.3), ниже - лампа DPI + IP справа
+        # (макет .connection-status разбит на две строки из-за реальных текстов)
+        div_status = Divider(card)
+        div_status.setGeometry(18, 722, 556, 2)
         self.led_status = Led(10, "off", card)
-        self.led_status.setGeometry(18, 630, 10, 10)
+        self.led_status.setGeometry(18, 731, 10, 10)
         self.lbl_status = _label(
-            card, "Готов", 36, 627, 530, 16, theme.TEXT, theme.f_body(),
+            card, "Готов", 34, 728, 540, 16, theme.TEXT, theme.f_body(),
         )
         # лампа обхода DPI - своя, как у VPN (просьба 12.10), под строкой
         # статуса слева; IP-строка справа ей не мешает (текст прижат вправо)
         self.led_zapret = Led(10, "off", card)
-        self.led_zapret.setGeometry(18, 647, 10, 10)
+        self.led_zapret.setGeometry(18, 749, 10, 10)
         self.lbl_zapret = _label(
-            card, "DPI", 36, 644, 44, 16, theme.TEXT_DIM, theme.f_caps(),
+            card, "DPI", 34, 746, 40, 16, theme.TEXT_DIM, theme.f_caps(),
         )
         self.lbl_egress = _label(
-            card, "", 18, 644, 556, 16, theme.TEXT_DIM, theme.f_mono(), "right"
+            card, "", 18, 746, 556, 16, theme.TEXT_DIM, theme.f_mono(), "right"
         )
 
     # ---- обход блокировок (zapret) - новое, 02.10.2026 --------------------

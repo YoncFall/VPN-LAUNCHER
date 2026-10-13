@@ -6,10 +6,11 @@
 Поведение дословно как в owner-draw 1.0.6:
   - одиночное выделение (WinForms SelectionMode One: повторный клик по уже
     выделенной строке выделение не снимает);
-  - выделение: плашка (3, y+2, W-6, h-4) радиус 5, градиент (44,62,82)->
-    (28,44,62) сверху вниз, неон-полоска 3x(h-8) на x=3, y+4
+  - выделение (вид по макету 13.10): плашка (3, y+2, W-6, h-4) радиус 5
+    фиолетовая (40,33,62)->(31,25,48), неон-полоска 3x(h-8) на x=3
     (Accent->AccentD);
-  - строки с нечётным индексом: фон (22,25,34) во всю строку;
+  - строки таблицы серверов разделены тонкой линией (43,53,68) снизу
+    (зебра убрана, как border-bottom строк в макете);
   - паддинг текста 8 (Bounds.X + Pad), EndEllipsis, высота строки 28
     (New-GameList ItemHeight), пустой (без фокусной) прямоугольник выключен;
   - ping-режим (и только пока строка < числа нод): прото 46px справа от
@@ -23,7 +24,7 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSize, Qt
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QStandardItem,
     QStandardItemModel,
@@ -71,32 +72,36 @@ class _NeonDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # --- фон строки / плашка выделения (835-851) ---
+        # --- фон строки / плашка выделения (вид по макету 13.10) ---
         if sel:
             path = QPainterPath()
             path.addRoundedRect(3, rect.y() + 2, w - 6, h - 4, 5, 5)
             g = QLinearGradient(0, rect.y(), 0, rect.y() + h)
-            g.setColorAt(0.0, QColor(44, 62, 82))
-            g.setColorAt(1.0, QColor(28, 44, 62))
+            g.setColorAt(0.0, QColor(40, 33, 62))
+            g.setColorAt(1.0, QColor(31, 25, 48))
             painter.fillPath(path, g)
             bar = QLinearGradient(0, rect.y(), 0, rect.y() + h)
             bar.setColorAt(0.0, QColor(theme.ACCENT))
             bar.setColorAt(1.0, QColor(theme.ACCENT_D))
             painter.fillRect(3, rect.y() + 4, 3, h - 8, bar)
-        elif row % 2 == 1:
-            painter.fillRect(rect, QColor(22, 25, 34))
+        elif view.ping and row >= 0:
+            # таблица серверов: тонкая линия-разделитель, как border-bottom
+            # строк в макете (зебра больше нет)
+            painter.fillRect(
+                QRectF(8, rect.bottom() - 1, w - 16, 1), QColor(43, 53, 68, 150)
+            )
 
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        clr = QColor(theme.TEXT) if sel else QColor(206, 212, 226)
+        clr = QColor(theme.TEXT) if sel else QColor(189, 200, 215)
         pad_l = view.pad  # Bounds.X = 0 в координатах viewport
         flags = Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine
 
         nodes = view.nodes
         if view.ping and row < len(nodes):
             node = nodes[row]
-            # прото: rect (padL, y, 46, h), правый край, капс, TextDim
+            # прото: rect (padL, y, 46, h), правый край, капс, светло-голубой
             painter.setFont(theme.f_caps())
-            painter.setPen(QPen(QColor(theme.TEXT_DIM)))
+            painter.setPen(QPen(QColor(139, 191, 255)))
             painter.drawText(
                 pad_l, rect.y(), 46, h,
                 flags | Qt.AlignmentFlag.AlignRight,
@@ -161,7 +166,7 @@ class NeonList(QListView):
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setVerticalScrollBar(NeonScrollBar(self))
         self.setStyleSheet(
-            "QListView { background-color: #12151D; border: none; outline: none; }"
+            "QListView { background-color: #0B1017; border: none; outline: none; }"
         )
         # фокус - по клику; рамку фокуса не рисуем (в 1.0.6 её нет)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)

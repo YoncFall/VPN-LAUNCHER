@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Игровая кнопка. Порт New-GameButton (theme.ps1:724-782).
+"""Игровая кнопка. Порт New-GameButton (theme.ps1:724-782), вид по макету 13.10.
 
 Виды (kind):
-  ghost   - тёмная с градиентом (27,31,42)->(21,24,32), радиус 8
-  accent  - главная голубая (46,226,255)->(0,160,205), радиус 9
-  danger  - красная 'ОТКЛЮЧИТЬ' (255,104,132)->(196,48,78), радиус 9
-  capmin / capclose - квадратики шапки 34x30, радиус 7, глифы minus/cross
+   ghost   - тёмная как секции (#171e28), рамка #303b4a, радиус 6
+   accent  - главная фиолетовая «ПОДКЛЮЧИТЬСЯ» (градиент #7651c5->#51369a)
+   danger  - «ОТКЛЮЧИТЬ»: тёмно-красная (#291a22) с розовым текстом (макет)
+   capmin / capclose - квадратики шапки, глифы minus/cross
+Опция icon: векторная иконка слева от текста (icons.py, без эмодзи).
 Выключенное состояние рисуется как ghost с тусклым текстом (как в 1.0.6).
 """
 from __future__ import annotations
@@ -15,36 +16,39 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from vpn_launcher.ui import theme
+from vpn_launcher.ui import icons
 
 # kind -> состояние -> (top, bottom, border, text)
 _SKINS: dict[str, dict[str, tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...]]]] = {
     "ghost": {
-        "normal": ((27, 31, 42), (21, 24, 32), (46, 52, 68), (176, 184, 200)),
-        "hover": ((31, 37, 50), (25, 29, 40), (72, 82, 108), (230, 234, 242)),
-        "down": ((17, 20, 28), (15, 17, 24), (46, 52, 68), (132, 142, 162)),
+        "normal": ((23, 30, 40), (23, 30, 40), (48, 59, 74), (185, 197, 213)),
+        "hover": ((32, 42, 56), (32, 42, 56), (70, 85, 106), (232, 237, 245)),
+        "down": ((17, 22, 30), (17, 22, 30), (48, 59, 74), (129, 141, 160)),
     },
     "accent": {
-        "normal": ((46, 226, 255), (0, 160, 205), (0, 205, 245), (3, 26, 34)),
-        "hover": ((96, 240, 255), (0, 176, 214), (120, 246, 255), (3, 26, 34)),
-        "down": ((0, 140, 178), (0, 110, 148), (0, 190, 230), (3, 26, 34)),
+        "normal": ((118, 81, 197), (81, 54, 154), (140, 106, 214), (255, 255, 255)),
+        "hover": ((133, 94, 214), (96, 63, 172), (167, 131, 255), (255, 255, 255)),
+        "down": ((96, 66, 160), (66, 44, 120), (140, 106, 214), (232, 237, 245)),
     },
     "danger": {
-        "normal": ((255, 104, 132), (196, 48, 78), (255, 92, 122), (42, 4, 12)),
-        "hover": ((255, 130, 156), (222, 64, 96), (255, 150, 174), (42, 4, 12)),
-        "down": ((196, 48, 78), (150, 34, 58), (220, 70, 100), (42, 4, 12)),
+        "normal": ((45, 28, 37), (41, 26, 34), (96, 48, 59), (242, 138, 153)),
+        "hover": ((58, 32, 43), (58, 32, 43), (163, 75, 91), (255, 172, 184)),
+        "down": ((35, 20, 28), (35, 20, 28), (96, 48, 59), (217, 106, 124)),
     },
     "capmin": {
-        "normal": ((18, 21, 29), (16, 19, 26), (46, 52, 68), (150, 158, 176)),
+        "normal": ((16, 21, 29), (16, 21, 29), (52, 45, 77), (150, 158, 176)),
         "hover": ((33, 38, 51), (28, 32, 43), (90, 100, 128), (230, 234, 242)),
-        "down": ((18, 21, 29), (16, 19, 26), (46, 52, 68), (150, 158, 176)),
+        "down": ((16, 21, 29), (16, 21, 29), (52, 45, 77), (150, 158, 176)),
     },
     "capclose": {
-        "normal": ((18, 21, 29), (16, 19, 26), (46, 52, 68), (150, 158, 176)),
-        "hover": ((70, 20, 30), (58, 14, 24), (255, 77, 109), (255, 77, 109)),
-        "down": ((18, 21, 29), (16, 19, 26), (46, 52, 68), (150, 158, 176)),
+        "normal": ((16, 21, 29), (16, 21, 29), (52, 45, 77), (150, 158, 176)),
+        "hover": ((70, 20, 30), (58, 14, 24), (255, 97, 117), (255, 97, 117)),
+        "down": ((16, 21, 29), (16, 21, 29), (52, 45, 77), (150, 158, 176)),
     },
 }
-_DISABLED_TEXT = (74, 81, 98)
+_DISABLED_TEXT = (84, 92, 110)
+_ICON = 13   # размер иконки в кнопке
+_ICON_GAP = 5
 
 
 class GameButton(QWidget):
@@ -56,11 +60,14 @@ class GameButton(QWidget):
         kind: str = "ghost",
         radius: int = 8,
         parent=None,
+        *,
+        icon: str = "",
     ) -> None:
         super().__init__(parent)
         self._text = text
         self._kind = kind if kind in _SKINS else "ghost"
         self._radius = radius
+        self._icon = icon
         self._hover = False
         self._down = False
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -148,10 +155,20 @@ class GameButton(QWidget):
             p.setPen(pen)
             p.drawLine(QPointF(9, h / 2), QPointF(w - 9, h / 2))
         else:
+            text_x = 6.0
+            if self._icon:
+                # векторная иконка слева от текста (макет, без эмодзи)
+                icons.paint(
+                    p,
+                    self._icon,
+                    QRectF(8, (h - _ICON) / 2.0, _ICON, _ICON),
+                    QColor(*txt),
+                )
+                text_x = 6.0 + _ICON + _ICON_GAP
             p.setPen(QColor(*txt))
             p.setFont(theme.f_btn())
             p.drawText(
-                QRectF(6, 0, w - 12, h),
+                QRectF(text_x, 0, w - text_x - 6, h),
                 int(Qt.AlignmentFlag.AlignCenter)
                 | int(Qt.TextFlag.TextSingleLine)
                 | int(Qt.TextFlag.TextDontClip),

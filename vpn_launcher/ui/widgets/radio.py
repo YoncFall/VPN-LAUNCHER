@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Сегмент-радиокнопка режима. Порт New-GameRadio (theme.ps1:937-998).
+"""Сегмент-радиокнопка режима. Порт New-GameRadio (theme.ps1:937-998), вид по макету.
 
-Выбрана: градиент (24,52,68)->(16,40,55), голубая рамка, точка 6px,
-текст Accent. Не выбрана: (23,26,36)->(19,22,31) [hover (31,37,50)->(25,29,40)],
-рамка Line [LineHi], текст (150,158,176) [Text]. Радиус 8, шрифт FBtn.
+Выбрана: градиент (43,35,69)->(33,26,54), фиолетовая рамка #7754ba, точка
+6px Accent, текст (217,201,255). Не выбрана: фон #0b1017 (сливается с
+контейнером SegmentBox), без рамки, текст (137,150,169) [hover (215,226,241)].
+Радиус 5, шрифт FBtn. Контейнер SegmentBox — общая «пилюля» под пару
+сегментов (как .mode-segments/.exception-segments в макете).
 """
 from __future__ import annotations
 
@@ -12,6 +14,24 @@ from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from vpn_launcher.ui import theme
+
+
+class SegmentBox(QWidget):
+    """Контейнер-пилюля под пару сегментов-радио (фон #0b1017, рамка #283343).
+
+    Рисуется ДО радио (создаётся раньше них), поэтому сегменты видны поверх.
+    """
+
+    def paintEvent(self, e) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(11, 16, 23))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(40, 51, 67), 1))
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
 
 
 class GameRadio(QWidget):
@@ -57,25 +77,25 @@ class GameRadio(QWidget):
         w, h = self.width(), self.height()
 
         if self._checked:
-            top, bot = (24, 52, 68), (16, 40, 55)
-            border, txt = theme.ACCENT, theme.ACCENT
+            top, bot = (43, 35, 69), (33, 26, 54)
+            border, txt = QColor(119, 84, 186), QColor(217, 201, 255)
         elif self._hover:
-            top, bot = (31, 37, 50), (25, 29, 40)
-            border, txt = theme.LINE_HI, theme.TEXT
+            top, bot = (16, 21, 29), (16, 21, 29)
+            border, txt = QColor(70, 85, 106), QColor(215, 226, 241)
         else:
-            top, bot = (23, 26, 36), (19, 22, 31)
-            border, txt = theme.LINE, QColor(150, 158, 176)
+            top, bot = (11, 16, 23), (11, 16, 23)
+            border, txt = QColor(0, 0, 0, 0), QColor(137, 150, 169)
 
         grad = QLinearGradient(0, 0, 0, h)
         grad.setColorAt(0.0, QColor(*top))
         grad.setColorAt(1.0, QColor(*bot))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
-        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 5, 5)
 
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(border, 1))
-        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 8, 8)
+        p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), 5, 5)
 
         if self._checked:
             p.setPen(Qt.PenStyle.NoPen)

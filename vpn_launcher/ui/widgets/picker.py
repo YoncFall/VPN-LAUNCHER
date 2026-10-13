@@ -71,17 +71,17 @@ def _is_placeholder(model, row: int) -> bool:
 
 
 def _edit_qss() -> str:
-    return f"""
-    QLineEdit {{
+    return """
+    QLineEdit {
         background: transparent;
         border: none;
         padding: 0;
-        color: #E6EAF2;
-        font: 9pt "{theme.family()}";
-        selection-background-color: #0096BE;
-        selection-color: #031A22;
-    }}
-    """
+        color: #DFE8F4;
+        font: 9pt "%s";
+        selection-background-color: #7651C5;
+        selection-color: #FFFFFF;
+    }
+    """ % theme.family()
 
 
 class _DropRowDelegate(QStyledItemDelegate):
@@ -91,25 +91,23 @@ class _DropRowDelegate(QStyledItemDelegate):
         return QSize(40, ROW_H)
 
     def paint(self, painter: QPainter, option, index) -> None:
-        from PySide6.QtGui import QFontMetrics
-
         r = option.rect
         sel = bool(option.state & QStyle.StateFlag.State_Selected)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(r, QColor(19, 22, 30))
+        painter.fillRect(r, QColor(11, 16, 23))
         if sel:
             path = QPainterPath()
             path.addRoundedRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4, 6, 6)
             g = QLinearGradient(0, r.y(), 0, r.y() + r.height())
-            g.setColorAt(0.0, QColor(40, 56, 76))
-            g.setColorAt(1.0, QColor(28, 44, 62))
+            g.setColorAt(0.0, QColor(43, 35, 69))
+            g.setColorAt(1.0, QColor(33, 26, 54))
             painter.fillPath(path, g)
             painter.setPen(QPen(QColor(theme.ACCENT)))
             painter.drawPath(path)
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
         painter.setFont(theme.f_body())
-        painter.setPen(QPen(QColor(theme.TEXT) if sel else QColor(206, 212, 226)))
+        painter.setPen(QPen(QColor(theme.TEXT) if sel else QColor(189, 200, 215)))
         tw = max(4, r.width() - 16)
         painter.drawText(
             r.x() + 12, r.y(), tw, r.height(),
@@ -183,7 +181,7 @@ class _DropPopup(QWidget):
         self.list.setVerticalScrollBar(NeonScrollBar(self.list))
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # фокус остаётся в поле
         self.list.setStyleSheet(
-            "QListView { background-color: #13161E; border: none; outline: none; }"
+            "QListView { background-color: #0B1017; border: none; outline: none; }"
         )
 
     def resizeEvent(self, e) -> None:  # noqa: N802
@@ -221,8 +219,8 @@ class _DropPopup(QWidget):
         w, h = self.width(), self.height()
         path = QPainterPath()
         path.addRoundedRect(QRectF(0, 0, w, h), 10, 10)
-        p.fillPath(path, QColor(18, 21, 29))
-        p.setPen(QPen(QColor(72, 82, 108), 1))
+        p.fillPath(path, QColor(11, 16, 23))
+        p.setPen(QPen(QColor(64, 54, 95), 1))
         p.drawPath(path)
         p.setPen(QPen(QColor(255, 255, 255, 70), 1))
         p.drawLine(10, 2, w - 10, 2)
@@ -483,7 +481,7 @@ class GamePicker(QWidget):
 
         path = QPainterPath()
         path.addRoundedRect(QRectF(1, 1, w - 2, h - 2), 7, 7)
-        p.fillPath(path, QColor(19, 22, 30))
+        p.fillPath(path, QColor(11, 16, 23))
         focused = self._edit.hasFocus()
         line = (
             QColor(theme.BORDER_FOCUS)
@@ -519,12 +517,12 @@ class GamePicker(QWidget):
         bp = QPainterPath()
         bp.addRoundedRect(QRectF(w - bw - 1, by, bw - 2, bh), 5, 5)
         g = QLinearGradient(0, 0, 0, h)
-        g.setColorAt(0.0, QColor(52, 60, 80) if over_btn else QColor(36, 41, 54))
-        g.setColorAt(1.0, QColor(36, 42, 58) if over_btn else QColor(26, 30, 40))
+        g.setColorAt(0.0, QColor(48, 60, 84) if over_btn else QColor(30, 38, 52))
+        g.setColorAt(1.0, QColor(35, 45, 62) if over_btn else QColor(23, 30, 40))
         p.fillPath(bp, g)
-        p.setPen(QPen(QColor(100, 118, 152) if over_btn else QColor(60, 70, 92), 1))
+        p.setPen(QPen(QColor(100, 118, 152) if over_btn else QColor(70, 85, 106), 1))
         p.drawPath(bp)
-        p.setPen(QPen(QColor(58, 66, 86, 80), 1))
+        p.setPen(QPen(QColor(48, 59, 74, 80), 1))
         p.drawLine(w - _BTN_ZONE, by + 1, w - _BTN_ZONE, by + bh - 2)
 
         # шеврон-треугольник (460-465)

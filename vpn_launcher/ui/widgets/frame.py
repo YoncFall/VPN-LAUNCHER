@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Тёмная рамка-контейнер списка. Порт GameFrame (theme.ps1:130-154).
+"""Тёмная рамка-контейнер списка. Порт GameFrame (theme.ps1:130-154), вид по макету.
 
-Заливка (18,21,29), рамка (46,52,68), радиус 10,
-тонкий белый блик (a=70) по верхней грани между радиусами.
-Внутрь на этапе 4 встанет NeonList со своим скроллбаром.
+Заливка (11,16,23) #0b1017, рамка (43,53,68) #2b3544, радиус 8,
+тонкий белый блик (a=50) по верхней грани между радиусами.
+Внутрь - NeonList со своим скроллбаром (инсет 3).
 """
 from __future__ import annotations
 
@@ -24,12 +24,12 @@ class GameFrame(QWidget):
         r = self._radius
 
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(18, 21, 29))
+        p.setBrush(QColor(11, 16, 23))
         p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), r, r)
 
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor(46, 52, 68), 1))
+        p.setPen(QPen(QColor(43, 53, 68), 1))
         p.drawRoundedRect(QRectF(1, 1, w - 2, h - 2), r, r)
 
-        p.setPen(QPen(QColor(255, 255, 255, 70), 1))
+        p.setPen(QPen(QColor(255, 255, 255, 50), 1))
         p.drawLine(r + 1, 2, w - r - 1, 2)
