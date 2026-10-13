@@ -1451,9 +1451,15 @@ def main(argv: list[str] | None = None) -> int:
             scr.center().y() - target.height() // 2,
         )
     target.show()
-    # сторона-наследник при TUN-повышении прав: разбудить старое окно,
-    # чтобы оно закрылось (бесшовная передача) - см. win/elevate.py
-    signal_window_shown()
+    # сторона-наследник при повышении прав: разбудить старое окно, чтобы оно
+    # закрылось (бесшовная передача) - см. win/elevate.py. Сигнал отдаём,
+    # когда окно реально ВИДНО (для HTML - страница отрисована): иначе старое
+    # окно гаснет раньше, чем новое что-то показывает, и окно «мигает»
+    # (жалоба 13.10 «изчезает и потом появляется»)
+    if web_view is not None:
+        web_view.signal_when_visible(signal_window_shown)
+    else:
+        signal_window_shown()
 
     if autoconnect:
         QTimer.singleShot(700, win.autoconnect)  # AutoTimer.Interval = 700

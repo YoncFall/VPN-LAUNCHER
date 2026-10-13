@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import importlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -25,6 +26,13 @@ from vpn_launcher.ui.web.bridge import Bridge
 # Правка геометрии = перегенерировать подложку (см. gen_backdrop в КОНТЕКСТ.md).
 PAGE_W, PAGE_H = 760, 952
 MAX_W, MAX_H = 1000, 1400  # страховка от абсурдной высоты при отсутствии шрифтов
+
+# Передача окна при повышении прав (UAC): сигнал «новое окно видно» старому
+# экземпляру отдаём, когда страница РЕАЛЬНО отрисовалась (иначе старое окно
+# закрывается раньше, чем новое что-то показывает: окно гаснет и появляется
+# снова - жалоба 13.10). Опрос покадрово + страховка по таймауту.
+HANDOFF_POLL_MS = 100  # период проверки «страница отрисовалась»
+HANDOFF_FALLBACK_MS = 8000  # страховка: сигнал уйдёт даже без отрисовки
 
 
 def assets_dir() -> Path:
@@ -100,6 +108,11 @@ class WebWindow(QWidget):
         win.installEventFilter(self)
 
         self._drag_offset: tuple[int, int] | None = None
+        # передача окна при UAC (см. signal_when_visible)
+        self._load_done = False
+        self._handoff: Callable[[], None] | None = None
+        self._handoff_done = False
+        self._watching = False
         page.setHtml(self._page_html(), assets_dir().as_uri() + "/")
 
     # ---- страница --------------------------------------------------------
@@ -125,7 +138,9 @@ class WebWindow(QWidget):
     def _on_loaded(self, ok: bool) -> None:
         if not ok:
             return
+        self._load_done = True
         self.measure()
+        self._watch_paint()  # при передаче окна (UAC) - ждём отрисовки
 
     def measure(self) -> None:
         """Диагностика вёрстки: реальные размеры страницы (в консоль/лог).
@@ -152,6 +167,47 @@ class WebWindow(QWidget):
             return
         if (w, h) != (PAGE_W, PAGE_H):
             write_log(f"web ui: page {w}x{h} != window {PAGE_W}x{PAGE_H}")
+
+    # ---- передача окна при повышении прав (UAC) --------------------------
+    def signal_when_visible(self, callback: Callable[[], None]) -> None:
+        """Отдать сигнал передачи (win/elevate.py), когда страница видна.
+
+        Старое окно закрывается по этому сигналу: если слать его сразу после
+        show(), окно гаснет на время загрузки страницы и потом «появляется»
+        (жалоба 13.10 «изчезает и потом появляется»). Оцениваем видимость
+        покадрово (как в тесте click-through), со страховкой по таймауту:
+        даже если страница не отрисуется, старое окно не повиснет.
+        """
+        self._handoff = callback
+        self._handoff_done = False
+        self._watching = False
+        QTimer.singleShot(HANDOFF_FALLBACK_MS, self._fire_handoff)
+        self._watch_paint()
+
+    def _watch_paint(self) -> None:
+        """Запустить один цикл опроса (без передачи сигнала не шлём)."""
+        if self._handoff is None or self._watching:
+            return
+        self._watching = True
+        QTimer.singleShot(HANDOFF_POLL_MS, self._poll_paint)
+
+    def _poll_paint(self) -> None:
+        if self.isVisible():  # grab() отрисует и скрытое - ждём показа окна
+            img = self.grab().toImage()
+            if img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha() > 200:
+                # карточка плотная = страница показана
+                self._watching = False
+                self._fire_handoff()
+                return
+        QTimer.singleShot(HANDOFF_POLL_MS, self._poll_paint)
+
+    def _fire_handoff(self) -> None:
+        if self._handoff_done:
+            return
+        self._handoff_done = True
+        callback, self._handoff = self._handoff, None
+        if callback is not None:
+            callback()
 
     # ---- окно ------------------------------------------------------------
     def paintEvent(self, e) -> None:  # noqa: N802

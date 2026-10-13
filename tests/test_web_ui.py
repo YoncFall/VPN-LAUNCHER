@@ -259,6 +259,75 @@ def test_elevation_hands_over_visible_window_pos(qapp, monkeypatch):
         qapp.processEvents()
 
 
+def test_handoff_signal_waits_for_page_paint(qapp):
+    """Сигнал «окно видно» уходит после отрисовки страницы, а не сразу.
+
+    Иначе старое окно закрывается раньше, чем новое что-то показывает:
+    окно гаснет и появляется снова (жалоба 13.10 «изчезает и потом
+    появляется»).
+    """
+    import time
+
+    from vpn_launcher.ui.window import MainWindow
+    from vpn_launcher.ui.web.window import PAGE_H, PAGE_W, WebWindow
+
+    win = MainWindow()
+    view = WebWindow(win)
+    fired: list[bool] = []  # была ли карточка уже плотной в момент сигнала
+
+    def on_visible() -> None:
+        img = view.grab().toImage()
+        fired.append(img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha() > 200)
+
+    view.show()
+    view.signal_when_visible(on_visible)
+    deadline = time.monotonic() + 12.0
+    while time.monotonic() < deadline and not fired:
+        qapp.processEvents()
+        time.sleep(0.05)
+    try:
+        assert fired == [True], "сигнал ушёл до отрисовки страницы"
+        # повторный сигнал не шлём (старое окно уже разбужено)
+        view._fire_handoff()
+        assert len(fired) == 1
+    finally:
+        win.btn_zapret.close()
+        win.close()
+        view.close()
+        qapp.processEvents()
+
+
+def test_handoff_signal_fires_without_paint(qapp, monkeypatch):
+    """Страховка: сигнал уходит даже если страница не отрисовалась.
+
+    Без неё старое окно висело бы до своего таймаута (15с).
+    """
+    import time
+
+    from vpn_launcher.ui.web import window as web_window
+    from vpn_launcher.ui.window import MainWindow
+
+    monkeypatch.setattr(web_window, "HANDOFF_FALLBACK_MS", 300)
+    monkeypatch.setattr(  # опрос отрисовки отключаем - его не будет
+        web_window.WebWindow, "_poll_paint", lambda self: None
+    )
+    win = MainWindow()
+    view = web_window.WebWindow(win)  # не показываем: отрисовки не будет
+    fired: list[str] = []
+    view.signal_when_visible(lambda: fired.append("go"))
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not fired:
+        qapp.processEvents()
+        time.sleep(0.05)
+    try:
+        assert fired == ["go"]
+    finally:
+        win.btn_zapret.close()
+        win.close()
+        view.close()
+        qapp.processEvents()
+
+
 def test_app_mode_values_match_backend():
     """Значения переключателей = язык приложения (core/config.py).
 
