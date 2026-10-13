@@ -9,19 +9,21 @@ from __future__ import annotations
 
 import importlib
 import sys
-import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QWidget
 
+from vpn_launcher.core.log import write_log
 from vpn_launcher.ui.web.bridge import Bridge
 
-# стартовый размер до замера страницы (макет: 620 + поле под ракету)
-PAGE_W, PAGE_H = 700, 880
+# Размер окна фиксирован и связан с assets/backdrop.png (подложка-свечение):
+# окно не «прыгает» при загрузке серверов, ореол всегда совпадает с карточкой.
+# Правка геометрии = перегенерировать подложку (см. gen_backdrop в КОНТЕКСТ.md).
+PAGE_W, PAGE_H = 760, 952
 MAX_W, MAX_H = 1000, 1400  # страховка от абсурдной высоты при отсутствии шрифтов
 
 
@@ -82,6 +84,11 @@ class WebWindow(QWidget):
         self.view = QWebEngineView(self)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # подложка-свечение рисуется ОКНОМ под прозрачной страницей; файл
+        # backdrop.png свободно правится в монтажке (размер = размер окна)
+        self._backdrop = QImage(str(assets_dir() / "backdrop.png"))
+        if self._backdrop.isNull():
+            self._backdrop = QImage()
         self.channel = QWebChannel(self)
         self.channel.registerObject("bridge", self.bridge)
         page = self.view.page()
@@ -98,7 +105,6 @@ class WebWindow(QWidget):
         win.installEventFilter(self)
 
         self._drag_offset: tuple[int, int] | None = None
-        self._measured_at = 0.0
         page.setHtml(self._page_html(), assets_dir().as_uri() + "/")
 
     # ---- страница --------------------------------------------------------
@@ -127,7 +133,12 @@ class WebWindow(QWidget):
         self.measure()
 
     def measure(self) -> None:
-        """Подогнать размер окна под содержимое страницы (строки, списки)."""
+        """Диагностика вёрстки: реальные размеры страницы (в консоль/лог).
+
+        Размер окна намеренно НЕ подгоняется под страницу: он фиксирован и
+        связан с подложкой backdrop.png, иначе ореол перестаёт совпадать с
+        карточкой (см. комментарий к PAGE_W/PAGE_H).
+        """
         if self.view.page() is None:
             return
         self.view.page().runJavaScript(
@@ -137,24 +148,27 @@ class WebWindow(QWidget):
         )
 
     def on_state_pushed(self) -> None:
-        """Мост прислал состояние: иногда страница стала выше/ниже."""
-        now = time.monotonic()
-        if now - self._measured_at < 0.5:
-            return
-        self._measured_at = now
-        self.measure()
+        """Состояние пришло - размер окна не меняем (см. measure)."""
 
     def _on_size(self, size) -> None:  # noqa: ANN001
         try:
             w, h = int(size[0]), int(size[1])
         except (TypeError, ValueError, IndexError):
             return
-        if w <= 0 or h <= 0:
-            return
-        self.setFixedSize(min(w + 2, MAX_W), min(h + 2, MAX_H))
-        self.view.setGeometry(0, 0, self.width(), self.height())
+        if (w, h) != (PAGE_W, PAGE_H):
+            write_log(f"web ui: page {w}x{h} != window {PAGE_W}x{PAGE_H}")
 
     # ---- окно ------------------------------------------------------------
+    def paintEvent(self, e) -> None:  # noqa: N802
+        """Фон окна: невидимый слой (перехват кликов) + подложка-свечение."""
+        p = QPainter(self)
+        # alpha=1: поля невидимы, но Windows не пропускает по ним мышь
+        # (сквозь слоёное окно уходят только пиксели с нулевой альфой)
+        p.fillRect(self.rect(), QColor(10, 13, 18, 1))
+        if not self._backdrop.isNull():
+            p.drawImage(self.rect(), self._backdrop)
+        p.end()
+
     def begin_drag(self, screen_x: int, screen_y: int) -> None:
         g = self.pos()
         self._drag_offset = (screen_x - g.x(), screen_y - g.y())

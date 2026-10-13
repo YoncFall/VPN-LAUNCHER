@@ -153,6 +153,22 @@ def test_page_js_calls_bridge():
     assert "VPL.apply(" in js or "apply(" in js
 
 
+def test_backdrop_matches_window(qapp):  # noqa: ANN001
+    """Подложка-свечение: размер = размер окна, внутри карточки прозрачно."""
+    from PySide6.QtGui import QImage
+
+    from vpn_launcher.ui.web.window import PAGE_H, PAGE_W, assets_dir
+
+    img = QImage(str(assets_dir() / "backdrop.png"))
+    assert not img.isNull(), "backdrop.png не найден или не читается"
+    assert (img.width(), img.height()) == (PAGE_W, PAGE_H)
+    assert img.hasAlphaChannel()
+    center = img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha()
+    assert center < 16, f"внутри подложка должна быть прозрачной, alpha={center}"
+    corner = img.pixelColor(1, 1).alpha()
+    assert corner < 32, f"по краю окна должно быть прозрачно, alpha={corner}"
+
+
 # ---- снимок состояния ---------------------------------------------------
 def test_snapshot_initial_state(web):  # noqa: ANN001
     win, bridge, _page = web
