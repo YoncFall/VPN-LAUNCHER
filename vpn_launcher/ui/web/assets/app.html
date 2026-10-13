@@ -848,6 +848,14 @@ button:disabled {
 }
 
 
+/* Списки фиксированной высоты (прокрутка внутри) - окно не меняет размер,
+   подложка-свечение всегда совпадает с карточкой. */
+.server-table-wrap {
+  height: 164px;
+  overflow: auto;
+  border-radius: 6px;
+}
+
 /* ---- app-обёртка: страница = окно приложения ---- */
 /* фон прозрачный: тёмная «подложка» вокруг карточки не нужна, окно
    frameless + WA_TranslucentBackground показывает только сам макет.
@@ -858,6 +866,15 @@ html, body {
   min-height: 0;
 }
 body { background: transparent; }
+
+/* Чёрная тень 0 18px 55px из макета на светлом рабочем столе читалась как
+   тёмная подложка; оставляем только фиолетовое свечение - оно угасает в
+   полную прозрачность (просьба 13.10). */
+#window {
+  box-shadow:
+    0 0 0 1px rgba(160, 100, 255, .14),
+    0 0 30px rgba(120, 50, 255, .16);
+}
 body {
   /* поля-прозрачка: glow карточки (blur 9 + тень 55px) должен угасать, а не
      обрываться краем окна; справа ещё место под ракету и её тень */
@@ -1043,6 +1060,7 @@ input, .process-item, .server-row td { user-select: text; }
           Серверы
         </h2>
         <p class="servers-hint">Выбери сервер · пусто — авто-тест всех</p>
+        <div class="server-table-wrap">
         <table class="server-table">
           <thead>
             <tr>
@@ -1053,6 +1071,7 @@ input, .process-item, .server-row td { user-select: text; }
           </thead>
           <tbody id="serverList"></tbody>
         </table>
+        </div>
       </section>
 
       <section class="section">
