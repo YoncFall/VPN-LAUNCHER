@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QWidget
@@ -84,15 +84,6 @@ class WebWindow(QWidget):
         self.view = QWebEngineView(self)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        # подложка-свечение рисуется ОКНОМ под прозрачной страницей; файл
-        # backdrop.png свободно правится в монтажке (размер = размер окна).
-        # premultiplied - иначе GPU-композитинг слоёного окна даёт цвета
-        # «врозь» (кайма уезжала в оранжевый)
-        self._backdrop = QImage(str(assets_dir() / "backdrop.png")).convertToFormat(
-            QImage.Format.Format_ARGB32_Premultiplied
-        )
-        if self._backdrop.isNull():
-            self._backdrop = QImage()
         self.channel = QWebChannel(self)
         self.channel.registerObject("bridge", self.bridge)
         page = self.view.page()
@@ -164,13 +155,15 @@ class WebWindow(QWidget):
 
     # ---- окно ------------------------------------------------------------
     def paintEvent(self, e) -> None:  # noqa: N802
-        """Фон окна: невидимый слой (перехват кликов) + подложка-свечение."""
+        """Фон окна: невидимый слой, перехватывающий клики.
+
+        Видимая часть (карточка, свечение, кайма) рисуется страницей - ровно
+        как в макете; собственного ореола у окна нет.
+        """
         p = QPainter(self)
         # alpha=1: поля невидимы, но Windows не пропускает по ним мышь
         # (сквозь слоёное окно уходят только пиксели с нулевой альфой)
         p.fillRect(self.rect(), QColor(10, 13, 18, 1))
-        if not self._backdrop.isNull():
-            p.drawImage(self.rect(), self._backdrop)
         p.end()
 
     def begin_drag(self, screen_x: int, screen_y: int) -> None:

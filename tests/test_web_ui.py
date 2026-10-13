@@ -153,20 +153,15 @@ def test_page_js_calls_bridge():
     assert "VPL.apply(" in js or "apply(" in js
 
 
-def test_backdrop_matches_window(qapp):  # noqa: ANN001
-    """Подложка-свечение: размер = размер окна, внутри карточки прозрачно."""
-    from PySide6.QtGui import QImage
+def test_page_keeps_mockup_glow():
+    """Свечение/кайма - ровно из макета, мы их не отключаем (13.10)."""
+    from vpn_launcher.ui.web.window import assets_dir
 
-    from vpn_launcher.ui.web.window import PAGE_H, PAGE_W, assets_dir
-
-    img = QImage(str(assets_dir() / "backdrop.png"))
-    assert not img.isNull(), "backdrop.png не найден или не читается"
-    assert (img.width(), img.height()) == (PAGE_W, PAGE_H)
-    assert img.hasAlphaChannel()
-    center = img.pixelColor(PAGE_W // 2, PAGE_H // 2).alpha()
-    assert center < 16, f"внутри подложка должна быть прозрачной, alpha={center}"
-    corner = img.pixelColor(1, 1).alpha()
-    assert corner < 32, f"по краю окна должно быть прозрачно, alpha={corner}"
+    html = (assets_dir() / "app.html").read_text(encoding="utf-8")
+    assert "box-shadow: none !important" not in html
+    assert "0 18px 55px rgba(0,0,0,.42)" in html  # тень окна из макета
+    assert "#window::before" in html  # неоновая кайма на месте
+    assert "display: none !important" not in html
 
 
 # ---- снимок состояния ---------------------------------------------------
