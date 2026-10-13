@@ -856,7 +856,9 @@ html, body {
   min-height: 0;
 }
 body {
-  padding: 10px 78px 10px 10px;
+  /* поля-прозрачка: glow карточки (blur 9 + тень 55px) должен угасать, а не
+     обрываться краем окна; справа ещё место под ракету и её тень */
+  padding: 44px 96px 44px 44px;
   overflow: hidden;
   user-select: none;
 }
