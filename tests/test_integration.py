@@ -1818,6 +1818,18 @@ class TestZapret:
         assert ctl.start("combo") is False
         assert "already running" in ctl.last_error
 
+    def test_select_app_mode_rejects_unknown_value(self, win):
+        """13.10: макет слал «only» - выбор не применялся и «уезжал» на первый
+        переключатель. Неизвестный режим игнорируется, state не портится."""
+        win._select_app_mode("exclude")
+        before = win._app_mode()
+
+        win._select_app_mode("only")
+
+        assert win._app_mode() == before
+        assert win.state["appMode"] == before
+        assert not win.radio_vpnonly.checked()
+
     def test_zapret_click_replaces_foreign_winws(self, win, monkeypatch):
         """13.10 (диагностика): чужой winws держал тот же фильтр - наш не
         вставал, кнопка не загоралась. Клик спрашивает, по согласию

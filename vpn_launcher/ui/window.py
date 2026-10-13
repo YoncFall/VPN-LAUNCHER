@@ -716,6 +716,11 @@ class MainWindow(QWidget):
 
     def _select_app_mode(self, app_mode: str) -> None:
         """Клик по переключателю: применить режим и сохранить его со списком."""
+        if app_mode not in (APP_MODE_EXCLUDE, APP_MODE_INCLUDE):
+            # неизвестное значение (13.10: макет слал «only») переключило бы
+            # выбор «в никуда» - игнорируем, а не портим state
+            write_log(f"app mode ignored: {app_mode!r}")
+            return
         self._apply_app_mode(app_mode)
         self._save_excl()
         write_log(f"app mode selected: {app_mode}")

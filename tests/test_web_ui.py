@@ -164,6 +164,32 @@ def test_page_keeps_mockup_glow():
     assert "display: none !important" not in html
 
 
+def test_app_mode_values_match_backend():
+    """Значения переключателей = язык приложения (core/config.py).
+
+    Регресс 13.10: макет слал data-exclusion-mode="only", такого режима у
+    приложения нет - при старте не горел ни один переключатель, а клик по
+    «Только выбранные» уводил выбор на «Всё, кроме списка».
+    """
+    from vpn_launcher.core.config import APP_MODES
+    from vpn_launcher.ui.web.window import assets_dir
+
+    html = (assets_dir() / "app.html").read_text(encoding="utf-8")
+    excl = set(re.findall(r'data-exclusion-mode="([^"]+)"', html))
+    assert excl == set(APP_MODES), f"переключатели: {sorted(excl)}"
+    conn = set(re.findall(r'data-connection-mode="([^"]+)"', html))
+    assert conn == {"tun", "proxy"}, f"режимы подключения: {sorted(conn)}"
+
+
+def test_render_syncs_radio_dot():
+    """Точка радио-кнопки едет вместе с подсветкой сегмента (13.10)."""
+    from vpn_launcher.ui.web.window import assets_dir
+
+    js = (assets_dir() / "app.js").read_text(encoding="utf-8")
+    assert "dot.checked = on" in js
+    assert "renderModes(s) {" in js
+
+
 def test_dpi_lamp_mapping_in_page():
     """Лампа DPI загорается: мост шлёт ready/connecting, страница ждёт их же.
 

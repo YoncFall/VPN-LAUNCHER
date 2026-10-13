@@ -111,12 +111,19 @@
     },
 
     renderModes(s) {
-      $$(".exception-segments .segment").forEach((b) => {
-        b.classList.toggle("active", b.dataset.exclusionMode === s.appMode);
-      });
-      $$(".mode-segments .segment").forEach((b) => {
-        b.classList.toggle("active", b.dataset.connectionMode === s.mode);
-      });
+      // подсветка СЕГМЕНТА и положение радио-точки обязаны ехать вместе:
+      // в макете точка стояла статически в разметке и после переключения
+      // оставалась на прошлом варианте (13.10)
+      const sync = (sel, value, key) => {
+        $$(sel).forEach((b) => {
+          const on = b.dataset[key] === value;
+          b.classList.toggle("active", on);
+          const dot = b.querySelector("input");
+          if (dot) dot.checked = on;
+        });
+      };
+      sync(".exception-segments .segment", s.appMode, "exclusionMode");
+      sync(".mode-segments .segment", s.mode, "connectionMode");
     },
 
     renderStatus(s) {
