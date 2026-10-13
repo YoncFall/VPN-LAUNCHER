@@ -625,11 +625,20 @@ class TestConnect:
             lambda h: events.append(("release", h)),
         )
         monkeypatch.setattr(win, "close", lambda: events.append(("close",)))
+        # видимое окно HTML-интерфейса: позиция берётся у него, а не у
+        # скрытого движка (тот остаётся в 0,0 - см. _visible_window)
+        from PySide6.QtCore import QPoint
+
+        class _FakeVisible:
+            def pos(self) -> QPoint:
+                return QPoint(300, 400)
+
+        win.web_window = _FakeVisible()
         win._connect_click()
         assert [e[0] for e in events] == ["relaunch", "wait", "release", "close"]
         rel_args = events[0][1]
         assert rel_args[0] == "--autoconnect"
-        assert rel_args[1].startswith("--window-pos=")
+        assert rel_args[1] == "--window-pos=300,400", rel_args
         assert win.lbl_status.text() == "Запуск с правами администратора..."
 
     def test_disconnect(self, qapp, win):

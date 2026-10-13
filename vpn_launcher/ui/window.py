@@ -211,6 +211,10 @@ class MainWindow(QWidget):
         # 2.2.0: обход блокировок (zapret/winws) - свой контроллер процесса
         self._zapret = ZapretController()
         self._zapret_worker: ZapretWorker | None = None
+        # видимое окно (WebWindow при HTML-интерфейсе; None при --qt-ui и в
+        # тестах). Перезапуск с правами берёт позицию у него - см.
+        # _visible_window
+        self.web_window = None
 
         self._apply_mask()
         self._build()
@@ -543,6 +547,17 @@ class MainWindow(QWidget):
         else:
             self._zapret_pick()
 
+    def _visible_window(self) -> QWidget:
+        """Окно, которое видит пользователь (от него берём позицию при UAC).
+
+        С 13.10 (HTML-интерфейс) видимым является WebWindow, а сам MainWindow
+        скрыт и никогда не двигается - его pos() всегда (0,0). Раньше в
+        --window-pos уходила именно эта координата, и после перезапуска с
+        правами (обход DPI/TUN) окно уезжало в левый верхний угол (жалоба
+        13.10). При --qt-ui видимым является сам MainWindow.
+        """
+        return self.web_window if self.web_window is not None else self
+
     def _zapret_elevate(self) -> None:
         # winws требует админ-прав (WinDivert-драйвер): перезапускаем
         # приложение повышенным с продолжением --autozapret - механика
@@ -553,7 +568,7 @@ class MainWindow(QWidget):
         QApplication.processEvents()
         ready = create_window_shown_event()
         try:
-            p = self.pos()
+            p = self._visible_window().pos()  # не у скрытого окна (0,0)
             relaunch_elevated(["--autozapret", f"--window-pos={p.x()},{p.y()}"])
         except OSError as exc:
             release_window_shown_event(ready)
@@ -957,7 +972,7 @@ class MainWindow(QWidget):
             # поверх и переход не виден. Подробности - win/elevate.py.
             ready = create_window_shown_event()
             try:
-                p = self.pos()
+                p = self._visible_window().pos()  # не у скрытого окна (0,0)
                 relaunch_elevated(
                     ["--autoconnect", f"--window-pos={p.x()},{p.y()}"]
                 )
@@ -1416,6 +1431,7 @@ def main(argv: list[str] | None = None) -> int:
             from vpn_launcher.ui.web.window import WebWindow
 
             web_view = WebWindow(win)
+            win.web_window = web_view  # позиция для передачи при UAC
         except Exception as exc:  # нет WebEngine/прав - не падаем, а откат
             write_log(f"web ui unavailable ({exc}); fallback to qt ui")
             web_view = None

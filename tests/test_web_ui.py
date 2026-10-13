@@ -217,6 +217,48 @@ def test_window_margin_is_click_through(qapp):
         qapp.processEvents()
 
 
+def test_elevation_hands_over_visible_window_pos(qapp, monkeypatch):
+    """Перезапуск с правами (UAC) получает позицию ВИДИМОГО окна.
+
+    Регресс 13.10: с HTML-интерфейсом MainWindow скрыт и остаётся в (0,0),
+    а в --window-pos уходила именно его координата - после включения обхода
+    DPI окно уезжало в левый верхний угол вместо того, чтобы встать на
+    старое место.
+    """
+    from vpn_launcher.ui.window import MainWindow
+    from vpn_launcher.ui.web.window import WebWindow
+
+    monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: False)
+    relaunches: list[list[str]] = []
+    monkeypatch.setattr(
+        "vpn_launcher.ui.window.relaunch_elevated",
+        lambda args: relaunches.append(list(args)),
+    )
+    monkeypatch.setattr(
+        "vpn_launcher.ui.window.create_window_shown_event", lambda: 111
+    )
+    monkeypatch.setattr(
+        "vpn_launcher.ui.window.wait_window_shown",
+        lambda h, timeout_ms=0, pump=None: True,
+    )
+    monkeypatch.setattr(
+        "vpn_launcher.ui.window.release_window_shown_event", lambda h: None
+    )
+    win = MainWindow()
+    view = WebWindow(win)
+    win.web_window = view
+    view.move(123, 210)
+    try:
+        win._zapret_click()  # прав нет -> _zapret_elevate -> перезапуск
+        assert relaunches and relaunches[0][0] == "--autozapret"
+        assert relaunches[0][1] == "--window-pos=123,210", relaunches[0]
+    finally:
+        win.btn_zapret.close()
+        win.close()
+        view.close()
+        qapp.processEvents()
+
+
 def test_app_mode_values_match_backend():
     """Значения переключателей = язык приложения (core/config.py).
 
