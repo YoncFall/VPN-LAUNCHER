@@ -12,8 +12,11 @@ WinDivert, полезные грузы .bin; lists: списки целей). Э
 
 Дисциплина процессов: управляется ТОЛЬКО свой winws (свой Popen,
 terminate только ему). Чужие экземпляры winws (например, репак с
-рабочего стола или его служба) не гасятся - пока они живы, подбор
-отказывается работать (двойной перехват портил бы результаты пробы).
+рабочего стола или его служба) по умолчанию не гасятся - пока они
+живы, подбор отказывается работать (двойной перехват портил бы
+результаты пробы). Исключение - явное согласие пользователя в диалоге
+(13.10): осиротевший winws держит тот же фильтр, и без его завершения
+наш экземпляр вообще не встаёт (см. kill_foreign_winws).
 """
 from __future__ import annotations
 
@@ -160,8 +163,8 @@ def probe(urls: tuple[str, ...] = PROBE_URLS, timeout: float = PROBE_TIMEOUT) ->
     return True
 
 
-def foreign_winws_running(own_pid: int | None = None) -> bool:
-    """Жив ли winws, НЕ запущенный нами (tasklist по имени образа)."""
+def _winws_pids() -> list[int]:
+    """PID всех живых winws.exe (tasklist по имени образа)."""
     try:
         out = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq winws.exe", "/NH"],
@@ -171,18 +174,62 @@ def foreign_winws_running(own_pid: int | None = None) -> bool:
             creationflags=_CREATE_NO_WINDOW,
         ).stdout
     except Exception:
-        return False
+        return []
+    pids: list[int] = []
     for line in out.splitlines():
         if "winws.exe" not in line.lower():
             continue
         parts = line.split()
         try:
-            pid = int(parts[1])
+            pids.append(int(parts[1]))
         except (IndexError, ValueError):
             continue
-        if own_pid is None or pid != own_pid:
-            return True
-    return False
+    return pids
+
+
+def foreign_winws_running(own_pid: int | None = None) -> bool:
+    """Жив ли winws, НЕ запущенный нами."""
+    return any(pid != own_pid for pid in _winws_pids())
+
+
+def kill_foreign_winws(own_pid: int | None = None) -> None:
+    """Завершить ЧУЖИЕ экземпляры winws (своего не трогаем).
+
+    Нужно, когда осиротевший winws (остался после аварийного закрытия
+    приложения) держит тот же сетевой фильтр: с ним наш экземпляр не
+    встаёт - winws пишет «A copy of winws is already running with the
+    same filter» и падает с кодом 1. Вызывается ТОЛЬКО после явного
+    подтверждения пользователя (диалог в _zapret_click), требует
+    админ-прав.
+    """
+    for pid in _winws_pids():
+        if pid == own_pid:
+            continue
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True,
+                timeout=15,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+        except Exception:
+            continue
+        write_log(f"zapret: foreign winws pid {pid} terminated on user request")
+
+
+def _winws_tail() -> str:
+    """Последняя строка winws.log - там причина мгновенного падения."""
+    try:
+        lines = [
+            ln.strip()
+            for ln in (ZAPRET_DIR / "winws.log")
+            .read_text(encoding="utf-8", errors="replace")
+            .splitlines()
+            if ln.strip()
+        ]
+    except OSError:
+        return ""
+    return lines[-1] if lines else ""
 
 
 class ZapretController:
@@ -190,6 +237,8 @@ class ZapretController:
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen | None = None
+        # причина последнего неудачного старта (последняя строка winws.log)
+        self.last_error: str = ""
 
     @property
     def pid(self) -> int | None:
@@ -200,8 +249,14 @@ class ZapretController:
     def running(self) -> bool:
         return self.pid is not None
 
-    def start(self, name: str) -> None:
-        """Запустить стратегию (предыдущий свой экземпляр - остановить)."""
+    def start(self, name: str) -> bool:
+        """Запустить стратегию (предыдущий свой экземпляр - остановить).
+
+        Возвращает False, если winws упал сразу (причина - в last_error:
+        последняя строка winws.log, например «A copy of winws is already
+        running with the same filter») - иначе сбой был бы невидим.
+        """
+        self.last_error = ""
         if self.running():
             self.stop()
         args = [str(WINWS), *build_args(name)]
@@ -227,6 +282,11 @@ class ZapretController:
             write_log(
                 f"zapret: winws '{name}' exited immediately (code {rc})"
             )
+            self.last_error = (
+                _winws_tail() or f"winws завершился сразу (код {rc})"
+            )
+            return False
+        return True
 
     def stop(self) -> None:
         """Остановить СВОЙ winws (сиротой при закрытии окна не оставляем)."""

@@ -56,7 +56,11 @@ from vpn_launcher.core.config import (
 )
 from vpn_launcher.core.log import write_log
 from vpn_launcher.core.state import load_state, save_state
-from vpn_launcher.core.zapret import ZapretController
+from vpn_launcher.core.zapret import (
+    ZapretController,
+    foreign_winws_running,
+    kill_foreign_winws,
+)
 from vpn_launcher.paths import LOG_FILE, install_root
 from vpn_launcher.ui import theme
 from vpn_launcher.ui.icons import Icon
@@ -499,12 +503,41 @@ class MainWindow(QWidget):
         if not is_elevated():
             self._zapret_elevate()
             return
+        if foreign_winws_running(self._zapret.pid):
+            # Чужой/осиротевший winws держит тот же фильтр: наш экземпляр
+            # не встанет (winws - «A copy of winws is already running» и
+            # падает), а ракета/лампа при этом никогда не загорятся.
+            # 13.10: спрашиваем явно и завершаем только по согласию.
+            if not self._msg_confirm(
+                "Обход DPI уже запущен другим процессом.\n"
+                "Завершить его и включить обход лаунчером?",
+                "Обход DPI",
+            ):
+                self._status(
+                    "Обход DPI не включён: работает другой процесс", theme.WARN
+                )
+                return
+            kill_foreign_winws(self._zapret.pid)
+            if foreign_winws_running(self._zapret.pid):
+                self._status(
+                    "Не удалось завершить чужой процесс обхода", theme.DANGER
+                )
+                return
         strategy = str(self.state.get("zapretStrategy") or "")
         if strategy:
             try:
-                self._zapret.start(strategy)
+                started = self._zapret.start(strategy)
             except OSError as exc:
                 self._status(f"Не удалось запустить обход: {exc}", theme.DANGER)
+                return
+            if started is False:
+                # winws упал сразу - показываем ПРИЧИНУ из winws.log
+                # (раньше это записывалось только в журнал: кнопка молча
+                # не загоралась и было непонятно, что не так)
+                self._status(
+                    f"Обход не запустился: {self._zapret.last_error}",
+                    theme.DANGER,
+                )
                 return
             self._zapret_sync()
         else:

@@ -1770,6 +1770,137 @@ class TestZapret:
         ctl = ZapretController()
         assert ctl.running() is False and ctl.pid is None
         ctl.stop()
+        assert ctl.last_error == ""
+
+    def test_foreign_winws_killed_by_pid_only(self, monkeypatch):
+        """13.10: завершаем ТОЛЬКО чужие PID (свой winws не трогаем)."""
+        from vpn_launcher.core import zapret as zmod
+
+        calls: list[list[str]] = []
+
+        class _Out:
+            stdout = (
+                "winws.exe\t1111\tConsole\t1\t10,000 K\r\n"
+                "winws.exe\t2222\tConsole\t1\t10,000 K\r\n"
+            )
+
+        monkeypatch.setattr(
+            zmod.subprocess, "run", lambda args, **kw: calls.append(list(args)) or _Out()
+        )
+        assert zmod.foreign_winws_running(own_pid=1111) is True
+        assert zmod.foreign_winws_running(own_pid=9999) is True
+        zmod.kill_foreign_winws(own_pid=1111)
+        kills = [c for c in calls if c and c[0] == "taskkill"]
+        assert [c[3] for c in kills] == ["2222"], "свой PID 1111 должен жить"
+
+    def test_controller_start_reports_immediate_crash(
+        self, monkeypatch, tmp_path
+    ):
+        """winws упал сразу -> start() возвращает False и last_error =
+        последняя строка winws.log (13.10: сбой был виден только в журнале,
+        а ракета молча не загоралась)."""
+        from vpn_launcher.core import zapret as zmod
+
+        class _DeadProc:
+            pid = 4242
+
+            def poll(self):
+                return 1
+
+            def terminate(self):
+                pass
+
+        monkeypatch.setattr(zmod, "ZAPRET_DIR", tmp_path)
+        monkeypatch.setattr(zmod.subprocess, "Popen", lambda *a, **k: _DeadProc())
+        monkeypatch.setattr(zmod.time, "sleep", lambda s: None)
+        monkeypatch.setattr(zmod, "_winws_tail", lambda: "copy of winws is already running")
+        ctl = zmod.ZapretController()
+        assert ctl.start("combo") is False
+        assert "already running" in ctl.last_error
+
+    def test_zapret_click_replaces_foreign_winws(self, win, monkeypatch):
+        """13.10 (диагностика): чужой winws держал тот же фильтр - наш не
+        вставал, кнопка не загоралась. Клик спрашивает, по согласию
+        завершает чужой и запускает свой."""
+        from vpn_launcher.ui import window as wmod
+
+        state = {"foreign": True}
+        monkeypatch.setattr(wmod, "is_elevated", lambda: True)
+        monkeypatch.setattr(
+            wmod, "foreign_winws_running", lambda own_pid=None: state["foreign"]
+        )
+        killed: list = []
+        monkeypatch.setattr(
+            wmod,
+            "kill_foreign_winws",
+            lambda own_pid=None: killed.append(own_pid)
+            or state.update(foreign=False),
+        )
+        started: list = []
+        monkeypatch.setattr(
+            win._zapret, "running", lambda: False
+        )
+        monkeypatch.setattr(
+            win._zapret, "start", lambda name: started.append(name) or True
+        )
+        win.state["zapretStrategy"] = "combo"
+
+        win._zapret_click()
+
+        assert win._confirms, "нужно подтверждение на завершение чужого"
+        assert killed, "чужой winws должен быть завершён"
+        assert started == ["combo"], "после очистки должен стартовать свой"
+
+    def test_zapret_click_decline_foreign_keeps_status(self, win, monkeypatch):
+        """Отказ в диалоге = ничего не убиваем, но причина в статусе."""
+        from vpn_launcher.ui import window as wmod
+
+        monkeypatch.setattr(wmod, "is_elevated", lambda: True)
+        monkeypatch.setattr(
+            wmod, "foreign_winws_running", lambda own_pid=None: True
+        )
+        monkeypatch.setattr(
+            wmod,
+            "kill_foreign_winws",
+            lambda own_pid=None: pytest.fail("без согласия убивать нельзя"),
+        )
+        started: list = []
+        monkeypatch.setattr(win._zapret, "running", lambda: False)
+        monkeypatch.setattr(
+            win._zapret, "start", lambda name: started.append(name) or True
+        )
+        win._msg_confirm = lambda text, title="": (
+            win._confirms.append((text, title)) or False
+        )
+        win.state["zapretStrategy"] = "combo"
+
+        win._zapret_click()
+
+        assert started == []
+        assert "другой процесс" in win.lbl_status.text()
+
+    def test_zapret_click_shows_winws_failure_reason(self, win, monkeypatch):
+        """13.10: winws упал сразу - причина показывается в строке статуса,
+        а не только в журнале (иначе кнопка выглядит нерабочей молча)."""
+        from vpn_launcher.ui import window as wmod
+
+        monkeypatch.setattr(wmod, "is_elevated", lambda: True)
+        monkeypatch.setattr(
+            wmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        monkeypatch.setattr(win._zapret, "running", lambda: False)
+
+        def dead(name):  # noqa: ANN001
+            win._zapret.last_error = "A copy of winws is already running"
+            return False
+
+        monkeypatch.setattr(win._zapret, "start", dead)
+        win.state["zapretStrategy"] = "combo"
+
+        win._zapret_click()
+
+        assert "Обход не запустился" in win.lbl_status.text()
+        assert not win.btn_zapret.is_active(), "ракета не врёт про успех"
 
     def test_window_has_zapret_button(self, win):
         """Кнопка на месте; ПКМ (повторный подбор) - через контекстное меню."""
