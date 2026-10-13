@@ -1367,13 +1367,33 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("yoncfall-tech")
 
     win = MainWindow()
+    # 13.10.2026: интерфейс - HTML-макет GPT (QtWebEngine), логика остаётся
+    # в скрытом MainWindow. Откат на прежний Qt-вид: ключ --qt-ui.
+    web_view = None
+    if "--qt-ui" not in args:
+        try:
+            from vpn_launcher.ui.web.window import WebWindow
+
+            web_view = WebWindow(win)
+        except Exception as exc:  # нет WebEngine/прав - не падаем, а откат
+            write_log(f"web ui unavailable ({exc}); fallback to qt ui")
+            web_view = None
+    if web_view is not None:
+        # плашка-ракета и окно Qt не показываем: ракета и рамка - в HTML
+        win.btn_zapret.setWindowTitle("")
+        win.btn_zapret.hide()
+        win.hide()
+    target = web_view if web_view is not None else win
     pos = _window_pos_arg(args)
     if pos is not None:
-        win.move(pos[0], pos[1])  # окно от предыдущего экземпляра (передача)
+        target.move(pos[0], pos[1])  # окно от предыдущего экземпляра (передача)
     else:
         scr = app.primaryScreen().availableGeometry()
-        win.move(scr.center().x() - WIN_W // 2, scr.center().y() - WIN_H // 2)
-    win.show()
+        target.move(
+            scr.center().x() - target.width() // 2,
+            scr.center().y() - target.height() // 2,
+        )
+    target.show()
     # сторона-наследник при TUN-повышении прав: разбудить старое окно,
     # чтобы оно закрылось (бесшовная передача) - см. win/elevate.py
     signal_window_shown()
@@ -1389,9 +1409,10 @@ def main(argv: list[str] | None = None) -> int:
     if shot:
 
         def _grab() -> None:
-            win.grab().save(shot)
+            target.grab().save(shot)
             app.quit()
 
-        QTimer.singleShot(700, _grab)
+        # HTML-страница грузится дольше окна Qt, снимок - позже
+        QTimer.singleShot(3500 if web_view is not None else 700, _grab)
 
     return app.exec()
