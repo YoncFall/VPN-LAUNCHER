@@ -849,7 +849,12 @@ button:disabled {
 
 
 /* ---- app-обёртка: страница = окно приложения ---- */
-html, body { background: #0a0d12; }
+/* фон прозрачный: тёмная «подложка» вокруг карточки не нужна, окно
+   frameless + WA_TranslucentBackground показывает только сам макет */
+html, body {
+  background: transparent;
+  min-height: 0;
+}
 body {
   padding: 10px 78px 10px 10px;
   overflow: hidden;

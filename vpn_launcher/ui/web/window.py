@@ -72,19 +72,22 @@ class WebWindow(QWidget):
         self.win = win
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle(win.windowTitle())
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        # прозрачное окно: видно только карточку макета со свечением и ракету,
+        # тёмной «подложки» вокруг нет (просьба 13.10)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedSize(PAGE_W, PAGE_H)
 
         self.bridge = Bridge(win, host=self, parent=self)
 
         self.view = QWebEngineView(self)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.channel = QWebChannel(self)
         self.channel.registerObject("bridge", self.bridge)
         page = self.view.page()
         page.setWebChannel(self.channel)
-        # тёмный фон на время загрузки страницы (иначе мелькает белый прямоугольник)
-        page.setBackgroundColor(QColor(10, 13, 18))
+        # прозрачная страница: пока она грузится - тоже ничего лишнего не видно
+        page.setBackgroundColor(QColor(0, 0, 0, 0))
         self.bridge.page = page
         page.loadFinished.connect(self._on_loaded)
         self.view.setGeometry(0, 0, PAGE_W, PAGE_H)
