@@ -164,6 +164,19 @@ def test_page_keeps_mockup_glow():
     assert "display: none !important" not in html
 
 
+def test_dpi_lamp_mapping_in_page():
+    """Лампа DPI загорается: мост шлёт ready/connecting, страница ждёт их же.
+
+    Регресс 13.10: страница ждала значение "on", которого мост не присылает,
+    и лампа обхода не подсвечивалась (13.10).
+    """
+    from vpn_launcher.ui.web.window import assets_dir
+
+    js = (assets_dir() / "app.js").read_text(encoding="utf-8")
+    assert '"ready" ? "dpi-active"' in js
+    assert "dpiLamp === \"on\"" not in js
+
+
 # ---- снимок состояния ---------------------------------------------------
 def test_snapshot_initial_state(web):  # noqa: ANN001
     win, bridge, _page = web

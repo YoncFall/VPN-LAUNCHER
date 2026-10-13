@@ -128,8 +128,12 @@
       if (text) text.textContent = s.status || "";
       const dpi = $("#dpiLamp");
       if (dpi) {
-        dpi.className = "status-lamp " + (s.dpiLamp === "on" ? "dpi-active" : "dpi-inactive");
-        if (s.dpiLamp === "busy") dpi.classList.add("connecting");
+        // лампа обхода DPI: из моста приходит ready/connecting/off (те же
+        // классы, что у лампы VPN), раньше ждали "on" - и она не загоралась
+        const k = s.dpiLamp;
+        dpi.className =
+          "status-lamp " +
+          (k === "ready" ? "dpi-active" : k === "connecting" ? "connecting" : "dpi-inactive");
       }
       const ip = $("#externalIp");
       if (ip && s.egress) ip.textContent = s.egress;
