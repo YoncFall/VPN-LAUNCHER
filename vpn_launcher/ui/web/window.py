@@ -85,8 +85,12 @@ class WebWindow(QWidget):
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         # подложка-свечение рисуется ОКНОМ под прозрачной страницей; файл
-        # backdrop.png свободно правится в монтажке (размер = размер окна)
-        self._backdrop = QImage(str(assets_dir() / "backdrop.png"))
+        # backdrop.png свободно правится в монтажке (размер = размер окна).
+        # premultiplied - иначе GPU-композитинг слоёного окна даёт цвета
+        # «врозь» (кайма уезжала в оранжевый)
+        self._backdrop = QImage(str(assets_dir() / "backdrop.png")).convertToFormat(
+            QImage.Format.Format_ARGB32_Premultiplied
+        )
         if self._backdrop.isNull():
             self._backdrop = QImage()
         self.channel = QWebChannel(self)
