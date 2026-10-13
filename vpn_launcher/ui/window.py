@@ -516,6 +516,7 @@ class MainWindow(QWidget):
         # та же, что у --autoconnect (см. _connect_click, 2.1.4)
         self.btn_zapret.setEnabled(False)
         self._zapret_sync()  # лампа DPI - warn (повышение прав)
+        self._status("Обход DPI: подтвердите запрос прав администратора", theme.WARN)
         QApplication.processEvents()
         ready = create_window_shown_event()
         try:
@@ -524,8 +525,10 @@ class MainWindow(QWidget):
         except OSError as exc:
             release_window_shown_event(ready)
             if "UAC cancelled" in str(exc):
-                # отмена UAC - не ошибка: тихо возвращаем кнопку
+                # отмена UAC - не ошибка запуска, но пользователь должен
+                # видеть, почему ракета не загорелась (13.10)
                 write_log("zapret: elevation cancelled by user")
+                self._status("Обход DPI не включён: права не выданы", theme.WARN)
             else:
                 self._status(
                     "Не удалось получить права администратора", theme.DANGER
