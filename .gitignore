@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+dist-alt/
 state.json
 config.json
 sing-box.exe
@@ -15,5 +16,5 @@ app.pid
 watch-internet.log
 watch-internet.log.old
 
-# runtime: вывод winws (диагностика обхода DPI)
+# runtime: пїЅпїЅпїЅпїЅпїЅ winws (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ DPI)
 zapret/winws.log
