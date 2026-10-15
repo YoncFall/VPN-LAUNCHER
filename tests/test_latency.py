@@ -9,7 +9,6 @@ import pytest
 from vpn_launcher.core import latency
 from vpn_launcher.core.latency import measure_node_latency
 from vpn_launcher.win.routeif import (
-    _ifindex_from_route_table,
     default_gateway_ifindex,
     unicast_if_bytes,
 )
