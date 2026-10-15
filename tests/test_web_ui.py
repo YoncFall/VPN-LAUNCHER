@@ -467,17 +467,75 @@ def test_commands_reach_window(qapp, web):  # noqa: ANN001
     bridge.testConfig()
     bridge.toggleDpi()
     bridge.autoDpi()
-    qapp.processEvents()
+    # connect/dpi обязаны быть отложены (см. test_confirm_slots_defer...):
+    # пока слот страницы не вернулся, движок не доставляет ответ модалки и
+    # окно «зависает» - поэтому догоняют в конец очереди после событий
+    for _ in range(3):
+        qapp.processEvents()
     assert calls == [
         "load",
         "ping",
         "log",
-        "connect",
         "disconnect",
         "testcfg",
-        "dpi",
         "dpi-auto",
+        "connect",
+        "dpi",
     ]
+
+
+def test_confirm_slots_defer_to_keep_page_channel_free(qapp, web):  # noqa: ANN001
+    """Слот с подтверждением обязан вернуться странице ДО показа модалки.
+
+    15.10 (баг «нажал ОК - зависло, закрыть нельзя»): QtWebEngine, пока
+    занят вызовом из страницы, не доставляет обратно НИЧЕГО - answerModal
+    из вложенного цикла подтверждения не приходит никогда (журнал юзера:
+    обе попытки заканчивались только 180-секундной страховкой «отменён»).
+    _connect_click и _zapret_click поэтому запускаются через
+    QTimer.singleShot(0): слот страницы отрабатывает сразу, а диалог идёт
+    из главного цикла, где ответ приходит за миллисекунды.
+    """
+    win, bridge, _page = web
+    seen: list[str] = []
+    win._connect_click = lambda: seen.append("connect")  # noqa: SLF001
+    win._zapret_click = lambda: seen.append("dpi")  # noqa: SLF001
+
+    bridge.connectVpn()
+    bridge.toggleDpi()
+    assert seen == []  # в тот же стек вызова страницы не заходим
+    for _ in range(3):
+        qapp.processEvents()
+    assert seen == ["connect", "dpi"]
+
+
+def test_modal_has_no_dark_backdrop():
+    """15.10 (просьба): уведомление - без затемняющей подложки.
+
+    «Нам важно просто уведомление увидеть пользователю» - карточка
+    уведомления сама по себе заметна; слой при этом остаётся
+    перехватчиком кликов, пока окно открыто.
+    """
+    from vpn_launcher.ui.web.window import assets_dir
+
+    html = (assets_dir() / "app.html").read_text(encoding="utf-8")
+    block = html.split("#modalLayer {", 1)[1].split("}", 1)[0]
+    assert "background: transparent" in block
+    assert "rgba(" not in block
+
+
+def test_page_reports_js_errors():
+    """Ошибки JS страницы уходят в журнал (иначе они не видны вообще).
+
+    15.10: коллектора не существовало - window.__errs читался при
+    подключении, но никто его не заполнял.
+    """
+    from vpn_launcher.ui.web.window import assets_dir
+
+    js = (assets_dir() / "app.js").read_text(encoding="utf-8")
+    assert 'addEventListener("error"' in js
+    assert "unhandledrejection" in js
+    assert "flushErrs()" in js
+    assert "pageError" in js
 
 
 def test_select_and_text_commands(qapp, web):  # noqa: ANN001

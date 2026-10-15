@@ -924,7 +924,9 @@ input, .process-item, .server-row td { user-select: text; }
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(4, 6, 10, .62);
+  /* 15.10 (просьба): затемняющей подложки нет - только карточка
+     уведомления; слой по-прежнему перехватывает клики, пока окно открыто */
+  background: transparent;
 }
 #modalLayer[hidden] { display: none; }
 .modal-card {

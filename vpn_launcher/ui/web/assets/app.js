@@ -5,6 +5,17 @@
 (function () {
   "use strict";
 
+  // 15.10: ошибки JS раньше были невидимы - коллектора не существовало
+  // (window.__errs читался при подключении, но никто его не заполнял).
+  // Копим сюда и отдаём в журнал приложения через bridge.pageError.
+  window.__errs = [];
+  window.addEventListener("error", (event) => {
+    window.__errs.push(String((event && event.message) || event));
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    window.__errs.push("unhandled: " + String(event && event.reason));
+  });
+
   const $ = (sel, root) => (root || document).querySelector(sel);
 
   const VPL = {
@@ -34,9 +45,21 @@
     },
 
     // ---- состояние из Python -------------------------------------------
+    flushErrs() {
+      if (!this.bridge || !window.__errs.length) return;
+      try {
+        // забираем пачкой: журнал пишется построчно, воронку не делаем
+        this.bridge.pageError(window.__errs.splice(0, 20).join(" | "));
+      } catch (exc) {
+        // канал недоступен - записи уже изъяты, повтор не нужен
+        void exc;
+      }
+    },
+
     apply(s) {
       const first = this.state === null;
       this.state = s;
+      this.flushErrs();
       this.renderSubscription(s);
       this.renderServers(s);
       this.renderProcesses(s);

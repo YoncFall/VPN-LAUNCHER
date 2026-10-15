@@ -136,7 +136,16 @@ class Bridge(QObject):
 
     @Slot()
     def connectVpn(self) -> None:
-        self.win._connect_click()
+        # 15.10 (баг «нажал ОК - всё зависло, закрыть нельзя»): пока этот
+        # слот не вернётся, QtWebEngine не доставляет ОБРАТНО ни ответа
+        # модалки (answerModal), ни остальных кликов страницы - очередь
+        # сообщений страницы стоит. _connect_click открывает подтверждение
+        # вложенным циклом, поэтому из самого слота ответ «Продолжить» не
+        # приходил никогда (юзер видит: окно не реагирует, лампы мертвы,
+        # кнопка закрытия молчит). Откладываем на оборот цикла: слот
+        # страницы отрабатывает сразу, а подтверждение идёт из главного
+        # цикла - там ответ приходит за миллисекунды (проверено пробой).
+        QTimer.singleShot(0, self.win._connect_click)
 
     @Slot()
     def disconnectVpn(self) -> None:
@@ -148,7 +157,9 @@ class Bridge(QObject):
 
     @Slot()
     def toggleDpi(self) -> None:
-        self.win._zapret_click()
+        # та же причина, что у connectVpn (15.10): _zapret_click умеет
+        # показывать подтверждение (чужой winws) - не держим канал страницы
+        QTimer.singleShot(0, self.win._zapret_click)
 
     @Slot()
     def autoDpi(self) -> None:
