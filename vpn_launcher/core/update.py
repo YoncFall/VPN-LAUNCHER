@@ -152,28 +152,37 @@ def setup_dest(version: str) -> Path:
     return Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-Setup-{version}.exe"
 
 
-def helper_script(setup_path: Path) -> str:
-    """PowerShell-скрипт: ждать выхода нашего процесса, затем запустить установщик.
+def helper_script(setup_path: Path, app_path: Path) -> str:
+    """PowerShell-скрипт: дождаться нашего выхода, тихо установить, запустить.
+
+    /S - тихий режим установщика (без окон и UAC: программа уже закрыта,
+    установка идёт в профиль пользователя). После установки приложение
+    запускается само (в тихом режиме Setup.cs этого не делает); при ошибке
+    установки (код != 0) открывается лог установщика - иначе тихий режим
+    скрыл бы причину полностью.
 
     ASCII-тело, пути - параметры (Unicode на командной строке PowerShell не
     ломается, в отличие от кодировки самого .ps1).
     """
     return (
-        "param([int]$WaitPid, [string]$Setup)\n"
+        "param([int]$WaitPid, [string]$Setup, [string]$App)\n"
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         "try { Wait-Process -Id $WaitPid -Timeout 300 -ErrorAction Stop } catch {}\n"
-        "Start-Process -FilePath $Setup\n"
+        "$p = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru\n"
+        "try { $null = $p.WaitForExit(600000) } catch {}\n"
+        "if ($p.ExitCode -eq 0) { Start-Process -FilePath $App }\n"
+        "else { notepad.exe (Join-Path $env:TEMP 'vpnlauncher_setup.log') }\n"
     )
 
 
-def write_helper(dest: Path, setup_path: Path) -> Path:
+def write_helper(dest: Path, setup_path: Path, app_path: Path) -> Path:
     """Записать helper-скрипт рядом со Setup.exe и вернуть его путь."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(helper_script(setup_path), encoding="ascii")
+    dest.write_text(helper_script(setup_path, app_path), encoding="ascii")
     return dest
 
 
-def launch_helper(script: Path, setup_path: Path) -> None:
+def launch_helper(script: Path, setup_path: Path, app_path: Path) -> None:
     """Запустить helper отвязанно (скрытое окно, переживает наш выход)."""
     import subprocess
 
@@ -191,6 +200,8 @@ def launch_helper(script: Path, setup_path: Path) -> None:
             str(os.getpid()),
             "-Setup",
             str(setup_path),
+            "-App",
+            str(app_path),
         ],
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,  # noqa: S603
     )

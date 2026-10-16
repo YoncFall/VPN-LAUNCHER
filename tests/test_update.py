@@ -74,10 +74,13 @@ def test_fetch_latest_offline_is_none(monkeypatch):  # noqa: ANN001
     assert upd.fetch_latest(current="2.3.3") is None
 
 
-def test_helper_script_waits_for_pid(tmp_path):  # noqa: ANN001
-    script = upd.helper_script(tmp_path / "Setup.exe")
+def test_helper_script_waits_for_pid_then_installs_silently(tmp_path):  # noqa: ANN001
+    script = upd.helper_script(tmp_path / "Setup.exe", tmp_path / "VPNLauncher.exe")
     assert "Wait-Process" in script
-    assert "Start-Process" in script
+    # тихий режим: без окон установщика; сам запуск приложения после установки
+    assert "'/S'" in script
+    assert "Start-Process -FilePath $App" in script
+    assert "vpnlauncher_setup.log" in script  # ошибка установки не остаётся незамеченной
 
 
 # ---- мост (плашка в snapshot, слоты) --------------------------------------

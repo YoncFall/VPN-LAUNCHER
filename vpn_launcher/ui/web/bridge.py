@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import webbrowser
 from pathlib import Path
@@ -157,11 +158,16 @@ class Bridge(QObject):
             self._update["progress"] = pct
 
     def _on_update_done(self, path: str) -> None:
-        """Setup.exe скачан: поднять helper (ждёт нашего выхода) и закрыться."""
+        """Setup.exe скачан: поднять helper (ждёт нашего выхода) и закрыться.
+
+        Helper ставит тихо (/S) и сам запускает приложение - пользователю
+        не нужно кликать по установщику (просьба 16.10).
+        """
         setup = Path(path)
+        app = Path(sys.executable)  # frozen: наш exe в папке установки
         helper = Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-update-{os.getpid()}.ps1"
-        write_helper(helper, setup)
-        launch_helper(helper, setup)
+        write_helper(helper, setup, app)
+        launch_helper(helper, setup, app)
         # сначала чистит (отключение, kill switch), потом закрывается
         if self.host is not None:
             self.host.close_app()

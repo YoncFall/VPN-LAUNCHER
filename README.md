@@ -3,7 +3,7 @@
 Переписка [VPN LAUNCHER BY @YoncFALL 1.0.6](https://github.com/YoncFall/VPN-LAUNCHER/tree/ps-1.0.6)
 на Python + PySide6. Старая PowerShell-версия сохранена в ветке `ps-1.0.6`
 и продолжает поддерживаться; эта ветка (`main`) — Python-версия, релиз
-**[v2.4.0](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
+**[v2.4.1](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
 (`VPN-LAUNCHER-Setup.exe` — установщик с удалалкой, `VPN-LAUNCHER.zip` — portable).
 
 ## Обход DPI — работает без подписок
@@ -502,5 +502,5 @@ dev-окну. Установщик прогнан вживую: установк
 без остатка (папка/ярлыки/реестр чисты).
 
 **Windows-версия готова к публикации**: артефакты —
-`dist\VPN-LAUNCHER-2.4.0-Setup.exe` (одиночный установщик+удалалка) и
-`dist\VPN-LAUNCHER-2.4.0.zip` (portable с лицензиями).
+`dist\VPN-LAUNCHER-2.4.1-Setup.exe` (одиночный установщик+удалалка) и
+`dist\VPN-LAUNCHER-2.4.1.zip` (portable с лицензиями).
