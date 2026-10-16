@@ -78,6 +78,25 @@ GAME_SAFE_PROCESSES: tuple[str, ...] = (
 
 DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204"
 
+# Чистые домены: сервисы с антифродом и гео-проверкой всегда идут напрямую,
+# мимо туннеля (см. правило маршрутизации ниже). Иначе они видят IP чужого
+# датацентра и блокируют вход («взлом ВК» 12-13.10.2026 - ложная тревога).
+# apex матчится полем domain, поддомены - domain_suffix с ведущей точкой.
+# Список нельзя потерять - он в коде, как GAME_SAFE_PROCESSES.
+CLEAN_DOMAINS: tuple[str, ...] = (
+    # ВКонтакте
+    "vk.com", "vk.ru", "vk.cc", "userapi.com", "vkvideo.ru",
+    # Ozon
+    "ozon.ru", "ozon.com", "ozon.kz", "ozon.by", "ozonusercontent.com", "ozone.ru",
+    # Wildberries
+    "wildberries.ru", "wb.ru", "wbbasket.ru", "wb-basket.ru", "geobasket.ru", "wbpay.ru", "paywb.com", "rwb.ru",
+    # Одноклассники
+    "ok.ru", "odnoklassniki.ru", "okcdn.ru", "odkl.ru", "mycdn.me",
+    # Яндекс.Музыка (только сервис музыки; общая инфраструктура Яндекса,
+    # например passport/avatars, сознательно не входит - вне объёма)
+    "music.yandex.ru",
+)
+
 # Режимы работы списка процессов (см. docstring модуля):
 #   exclude - классика PS 1.0.6: перечисленные идут мимо VPN, остальное через;
 #   include - зеркало: через VPN идут только перечисленные, остальное напрямую.
@@ -210,6 +229,20 @@ def build_sing_box_config(
 
     # маршрутизация
     rules: list[dict[str, Any]] = [{"action": "sniff"}, {"protocol": "dns", "action": "hijack-dns"}]
+
+    # Чистые домены: сервисы с антифродом/гео-проверкой (ВК, Ozon, Wildberries,
+    # Одноклассники, Яндекс.Музыка) всегда идут НАПРЯМУЮ, мимо туннеля. Иначе они
+    # видят IP чужого датацентра и блокируют вход (диагностика «взлома ВК»
+    # 12-13.10.2026). Ставится ДО per-app, чтобы чистый домен выигрывал у любого
+    # процесса; работает в обоих режимах (включая proxy, где per-app нет).
+    # apex - поле domain (точное совпадение), поддомены - domain_suffix с
+    # ВЕДУЩЕЙ ТОЧКИ ("." + apex): suffix без точки ловил бы notvk.com под vk.com.
+    rules.append({
+        "action": "route",
+        "domain": list(CLEAN_DOMAINS),
+        "domain_suffix": ["." + d for d in CLEAN_DOMAINS],
+        "outbound": "direct",
+    })
 
     # per-app: один список, два направления (см. докстринг модуля).
     #   exclude - перечисленные идут НАПРЯМУЮ (важно для игр/античита),

@@ -60,6 +60,11 @@ def _ps_parity_view(built: dict) -> dict:
     import copy
 
     out = copy.deepcopy(built)
+    # Правило чистых домен (CLEAN_DOMAINS) появилось 13.10.2026: сознательное
+    # отклонение от PS 1.0.6 (там его нет), чтобы антифрод ВК/Ozon/WB не видел
+    # IP туннеля. Для сверки с эталоном оно вырезается; фактическое содержимое
+    # проверяет tests/test_config.py::test_clean_domains_rule.
+    out["route"]["rules"] = [r for r in out["route"]["rules"] if "domain" not in r]
     for inbound in out.get("inbounds", []):
         if inbound.get("type") == "tun":
             inbound["strict_route"] = True

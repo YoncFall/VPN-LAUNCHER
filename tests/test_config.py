@@ -10,6 +10,7 @@ from vpn_launcher.core import config as cfg  # модуль, чтобы pytest �
 from vpn_launcher.core.config import (
     APP_MODE_EXCLUDE,
     APP_MODE_INCLUDE,
+    CLEAN_DOMAINS,
     GAME_SAFE_PROCESSES,
     ConfigError,
     build_sing_box_config,
@@ -166,6 +167,44 @@ class TestModesAndRules:
         assert "STEAM.EXE" in proc_rule["process_name"]
 
 
+class TestCleanDomains:
+    """Правило чистых домен (13.10.2026): ВК/Ozon/WB/ОК/Яндекс.Музыка - direct.
+
+    Сервисы с антифродом не должны видеть IP туннеля (ложная тревога «взлома
+    ВК» 12-13.10.2026). Правило идёт сразу после sniff+hijack-dns (домен уже
+    извлечён) и ДО per-app, чтобы чистый домен выигрывал у любого процесса.
+    """
+
+    def test_rule_present_in_both_modes_and_direct(self):
+        for mode in ("tun", "proxy"):
+            c = build_sing_box_config(_nodes(), mode=mode)
+            rules = c["route"]["rules"]
+            rule = rules[2]
+            assert rule["action"] == "route"
+            assert rule["outbound"] == "direct"
+
+    def test_apex_exact_and_subdomain_suffix_with_leading_dot(self):
+        c = build_sing_box_config(_nodes(), mode="tun")
+        rule = c["route"]["rules"][2]
+        assert rule["domain"] == list(CLEAN_DOMAINS)
+        # suffix с ведущей точкой: матчит m.vk.com, но не apex и не notvk.com
+        assert rule["domain_suffix"] == ["." + d for d in CLEAN_DOMAINS]
+        assert "vk.com" in rule["domain"]
+        assert ".music.yandex.ru" in rule["domain_suffix"]
+        assert "vk.com" not in rule["domain_suffix"]
+
+    def test_rule_wins_over_per_app_in_include_mode(self):
+        # выбранный процесс идёт в proxy-group, но чистый домен - direct
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("mygame.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        rules = c["route"]["rules"]
+        clean_idx = next(i for i, r in enumerate(rules) if "domain" in r)
+        proc_idx = next(i for i, r in enumerate(rules) if "process_name" in r)
+        assert clean_idx < proc_idx
+
+
 class TestAppModeInclude:
     """Режим include (30.09.2026, новая фича): через VPN идут только выбранные.
 
@@ -195,14 +234,14 @@ class TestAppModeInclude:
         assert c["route"]["final"] == "direct"
 
     def test_rule_order_is_same_as_exclude(self):
-        # порядок правил не меняется: sniff, dns, per-app, локальные сети
+        # порядок правил не меняется: sniff, dns, чистые домены, per-app, локальные сети
         c = build_sing_box_config(
             _nodes(), mode="tun", app_list=("mygame.exe",),
             app_mode=APP_MODE_INCLUDE,
         )
         rules = c["route"]["rules"]
         assert [r.get("action") for r in rules[:2]] == ["sniff", "hijack-dns"]
-        assert "process_name" in rules[2]
+        assert "process_name" in rules[3]
         assert rules[-1]["ip_cidr"][0] == "127.0.0.0/8"
         assert rules[-1]["outbound"] == "direct"
 
