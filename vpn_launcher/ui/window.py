@@ -1467,6 +1467,11 @@ def main(argv: list[str] | None = None) -> int:
         # 2.2.0: пришли после перезапуска с правами - продолжаем обход DPI
         QTimer.singleShot(700, win._zapret_autostart)
 
+    if web_view is not None:
+        # 2.4.0: плашка обновления - проверяем сайт после старта (не мешаем
+        # загрузке подписки/пингу; офлайн - тихо без плашки)
+        QTimer.singleShot(3000, web_view.bridge.start_update_check)
+
     # VPN_SHOT=<path>: снять окно и выйти (визуальные сверки с 1.0.6)
     shot = os.environ.get("VPN_SHOT")
     if shot:

@@ -9,7 +9,9 @@
     поштучные результаты (в PS - очередь + таймер 200мс, текст статуса тот же);
   - EgressWorker - опрос внешнего IP в тике (VPN.ps1:630-640): 8с таймаут,
     ошибка -> 'Внешний IP недоступен' (в PS запрос синхронно блокировал UI;
-    здесь фон - отклонение, визуальный результат идентичен).
+    здесь фон - отклонение, визуальный результат идентичен);
+  - UpdateCheckWorker/UpdateDownloadWorker (2.4.0): проверка новой версии
+    на сайте и скачивание Setup.exe - мост показывает/прячет плашку обновления.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from PySide6.QtCore import QThread, Signal
 
 from vpn_launcher.core.latency import measure_node_latency
 from vpn_launcher.core.subscription import fetch_nodes
+from vpn_launcher.core.update import download_file, fetch_latest
 from vpn_launcher.core.zapret import run_autotest
 
 EGRESS_URL = "https://api.ipify.org?format=json"  # VPN.ps1:632
@@ -112,3 +115,49 @@ class ZapretWorker(QThread):
             self.done.emit(name or "", msg)
         except Exception as exc:
             self.done.emit("", f"Ошибка подбора: {exc}")
+
+
+class UpdateCheckWorker(QThread):
+    """Проверка новой версии на сайте (apps.json); found(UpdateInfo).
+
+    2.4.0: источник - apps.json на GitHub Pages (без rate-limit'ов GitHub
+    API); офлайн/битый JSON - тихий None, плашка не показывается.
+    """
+
+    found = Signal(object)
+
+    def __init__(self, current: str) -> None:
+        super().__init__()
+        self._current = current
+
+    def run(self) -> None:
+        try:
+            info = fetch_latest(current=self._current)
+        except Exception:
+            info = None  # тихий отказ: ошибка сети не должна ронять запуск
+        if info is not None:
+            self.found.emit(info)
+
+
+class UpdateDownloadWorker(QThread):
+    """Скачивание Setup.exe обновления; progress(0-100) | done(путь) | failed(текст)."""
+
+    progress = Signal(int)
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, url: str, dest) -> None:
+        super().__init__()
+        self._url = url
+        self._dest = dest
+
+    def run(self) -> None:
+        def cb(done_b: int, total_b: int | None) -> None:
+            if total_b:
+                self.progress.emit(int(done_b * 100 / total_b))
+
+        try:
+            download_file(self._url, self._dest, progress=cb)
+            self.done.emit(str(self._dest))
+        except Exception as exc:
+            self.failed.emit(str(exc))

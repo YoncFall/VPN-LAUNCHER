@@ -67,7 +67,30 @@
       this.renderStatus(s);
       this.renderButtons(s);
       this.renderDpi(s);
+      this.renderUpdate(s);
       if (first) this.buildDrop(s.picker || []);
+    },
+
+    renderUpdate(s) {
+      const banner = $("#updateBanner");
+      const info = s.update;
+      if (!info) {
+        banner.hidden = true;
+        return;
+      }
+      const text = $("#updateText");
+      const now = $("#updateNow");
+      if (info.phase === "downloading") {
+        text.textContent = "Скачивание обновления " + (info.progress || 0) + "%...";
+        now.disabled = true;
+      } else if (info.phase === "error") {
+        text.textContent = "Ошибка загрузки обновления: " + (info.error || "");
+        now.disabled = false;
+      } else {
+        text.textContent = "Доступна версия " + info.version;
+        now.disabled = false;
+      }
+      banner.hidden = false;
     },
 
     renderSubscription(s) {
@@ -372,6 +395,10 @@
       e.preventDefault();
       b() && b().autoDpi();
     };
+
+    // плашка обновления (2.4.0)
+    $("#updateNow").onclick = () => b() && b().doUpdate();
+    $("#updateLater").onclick = () => b() && b().dismissUpdate();
 
     // перетаскивание окна за шапку
     const bar = $(".titlebar");

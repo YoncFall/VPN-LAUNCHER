@@ -12,10 +12,22 @@ IPC-потока. QObject родителя - окно, значит слоты �
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import webbrowser
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEventLoop, QObject, QTimer, Slot
 
+from vpn_launcher import __version__
+from vpn_launcher.core.update import (
+    UpdateInfo,
+    is_installed_copy,
+    launch_helper,
+    setup_dest,
+    write_helper,
+)
 from vpn_launcher.ui import theme
 
 _POLL_MS = 120  # как часто страница забирает состояние окна
@@ -51,6 +63,12 @@ class Bridge(QObject):
         self._modal_id = 0
         self._waits: dict[int, QEventLoop] = {}
         self._hooks_installed = False
+        # обновление (2.4.0): _update - что показать на плашке (None - нет),
+        # _upd_chk/_upd_dl - референсы воркеров (QThread нельзя терять)
+        self._update: dict | None = None
+        self._update_dismissed = False
+        self._upd_chk: Any = None
+        self._upd_dl: Any = None
         self._install_hooks()
         self.timer = QTimer(self)
         self.timer.setInterval(_POLL_MS)
@@ -85,6 +103,75 @@ class Bridge(QObject):
     def ready(self) -> None:
         """Страница загрузилась - отдаём состояние."""
         self.push()
+
+    # ---- обновление (2.4.0) --------------------------------------------
+    def start_update_check(self) -> None:
+        """Проверить новую версию на сайте; наш воркер, референс держим."""
+        if self._upd_chk is not None:
+            return
+        from vpn_launcher.workers import UpdateCheckWorker
+
+        self._upd_chk = UpdateCheckWorker(__version__)
+        self._upd_chk.found.connect(self._on_update_found)
+        self._upd_chk.start()
+
+    def _on_update_found(self, info: UpdateInfo) -> None:
+        if self._update_dismissed:
+            return
+        self._update = {
+            "version": info.version,
+            "download": info.download,
+            "releasePage": info.release_page,
+            "phase": "ready",  # ready | downloading | error
+            "progress": 0,
+        }
+
+    @Slot()
+    def dismissUpdate(self) -> None:
+        """«Позже»: спрятать плашку до перезапуска приложения."""
+        self._update = None
+        self._update_dismissed = True
+
+    @Slot()
+    def doUpdate(self) -> None:
+        """«Обновить»: установленная копия - качаем Setup.exe; иначе - страница релиза."""
+        info = self._update
+        if not info or info.get("phase") != "ready":
+            return
+        if not is_installed_copy():
+            webbrowser.open(str(info.get("releasePage") or ""))
+            self.dismissUpdate()
+            return
+        from vpn_launcher.workers import UpdateDownloadWorker
+
+        dest = setup_dest(str(info["version"]))
+        self._update["phase"] = "downloading"
+        self._upd_dl = UpdateDownloadWorker(str(info["download"]), dest)
+        self._upd_dl.progress.connect(self._on_update_progress)
+        self._upd_dl.done.connect(self._on_update_done)
+        self._upd_dl.failed.connect(self._on_update_failed)
+        self._upd_dl.start()
+
+    def _on_update_progress(self, pct: int) -> None:
+        if self._update is not None:
+            self._update["progress"] = pct
+
+    def _on_update_done(self, path: str) -> None:
+        """Setup.exe скачан: поднять helper (ждёт нашего выхода) и закрыться."""
+        setup = Path(path)
+        helper = Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-update-{os.getpid()}.ps1"
+        write_helper(helper, setup)
+        launch_helper(helper, setup)
+        # сначала чистит (отключение, kill switch), потом закрывается
+        if self.host is not None:
+            self.host.close_app()
+        else:
+            self.win.close()
+
+    def _on_update_failed(self, msg: str) -> None:
+        if self._update is not None:
+            self._update["phase"] = "error"
+            self._update["error"] = msg
 
     @Slot()
     def loadSub(self) -> None:
@@ -236,6 +323,7 @@ class Bridge(QObject):
             "lamp": _LAMP.get(win.led_status.state(), "off"),
             "dpiLamp": _LAMP.get(win.led_zapret.state(), "off"),
             "egress": win.lbl_egress.text() or "Внешний IP: недоступен",
+            "update": self._update,
             "connect": win.btn_connect.isEnabled(),
             "disconnect": win.btn_disconnect.isEnabled(),
             "testcfg": win.btn_testcfg.isEnabled(),
