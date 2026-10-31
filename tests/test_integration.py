@@ -1471,9 +1471,10 @@ class TestZapret:
             return bool(self.started)
 
     def test_presets_packaged_and_valid(self):
-        """10 собственных стратегий (наши комбинации задокументированных
-        опций winws): имена уникальны, combo первая, аргументы целые,
-        winws и все упомянутые файлы запакованы (лежат на диске)."""
+        """12 собственных стратегий (наши комбинации задокументированных
+        опций winws; 2.4.2: combo, alt11, alt13 - реплики пакета 1.10.4,
+        остальные 9 - наши): имена уникальны, combo первая, аргументы
+        целые, winws и все упомянутые файлы запакованы (лежат на диске)."""
         from vpn_launcher.core.zapret import (
             BIN_DIR,
             LISTS_DIR,
@@ -1484,7 +1485,7 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert len(names) == 10 and len(set(names)) == 10
+        assert len(names) == 12 and len(set(names)) == 12
         assert names[0] == "combo"
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
@@ -1514,7 +1515,8 @@ class TestZapret:
         раньше профилей с методами, и обход не срабатывал вообще,
         хотя winws работал (документация: профили самодостаточны,
         наследования нет). v3: у combo 7 профилей (реплика рабочей
-        конфигурации: QUIC, голос, медиа, гугл, основной, 2x ipset)."""
+        конфигурации: QUIC, голос, медиа, гугл, основной, 2x ipset);
+        2.4.2: то же у alt11/alt13 (реплики пакета 1.10.4)."""
         from vpn_launcher.core.zapret_presets import PRESETS
 
         for preset in PRESETS:
@@ -1524,7 +1526,7 @@ class TestZapret:
                     profiles.append([])
                 else:
                     profiles[-1].append(a)
-            expected = 7 if preset["name"] == "combo" else 5
+            expected = 7 if preset["name"] in ("combo", "alt11", "alt13") else 5
             assert len(profiles) == expected, preset["name"]
             for i, prof in enumerate(profiles):
                 assert any(a.startswith("--dpi-desync=") for a in prof), (
@@ -1595,6 +1597,62 @@ class TestZapret:
         for a in build_args("combo"):
             assert "{BIN}" not in a and "{LISTS}" not in a
 
+    def test_alt11_alt13_replica_of_1_10_4(self):
+        """2.4.2 (жалоба 31.10): alt11/alt13 - реплики батников ALT11/ALT13
+        пакета zapret-discord-youtube 1.10.4 (7 профилей, без GameFilter):
+        эталонные фейки, QUIC repeats=11, основной профиль alt11 на
+        seqovl 664 с двойным fake-tls, alt13 на hostfakesplit c mail.ru."""
+        from vpn_launcher.core.zapret import build_args, preset_names
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        names = preset_names()
+        assert names[1:3] == ["alt11", "alt13"]
+        by_name = {p["name"]: p["args"] for p in PRESETS}
+
+        def profiles_of(name: str) -> list[list[str]]:
+            profs: list[list[str]] = [[]]
+            for a in by_name[name]:
+                if a == "--new":
+                    profs.append([])
+                else:
+                    profs[-1].append(a)
+            return profs
+
+        # оба: QUIC с эталонным фейком и repeats=11 (не 6, как в combo)
+        for name in ("alt11", "alt13"):
+            quic = profiles_of(name)[0]
+            assert "--filter-udp=443" in quic
+            assert "--dpi-desync-repeats=11" in quic
+            assert (
+                "--dpi-desync-fake-quic=+0@{BIN}quic_initial_www_google_com.bin"
+                in quic
+            )
+        # alt11: основной профиль - seqovl 664, двойной fake-tls (stun2+sferum)
+        main11 = profiles_of("alt11")[4]
+        assert "--filter-tcp=80,443" in main11
+        assert "--dpi-desync=fake,multisplit" in main11
+        assert "--dpi-desync-split-seqovl=664" in main11
+        assert "--dpi-desync-fake-tls=+0@{BIN}stun2.bin" in main11
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_www_sferum_ru.bin" in main11
+        assert "--dpi-desync-fake-http=+0@{BIN}tls_clienthello_www_sferum_ru.bin" in main11
+        # alt13: основной профиль - hostfakesplit с подменой хоста на mail.ru
+        main13 = profiles_of("alt13")[4]
+        assert "--dpi-desync=fake,hostfakesplit" in main13
+        assert "--dpi-desync-hostfakesplit-mod=host=mail.ru,altorder=1" in main13
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_sochi_park.bin" in main13
+        assert "--dpi-desync-repeats=5" in main13
+        # гугл: alt11 - ip-id=zero + seqovl, alt13 - hostfakesplit (без ip-id)
+        google11 = profiles_of("alt11")[3]
+        assert "--hostlist={LISTS}list-google.txt" in google11
+        assert "--ip-id=zero" in google11
+        google13 = profiles_of("alt13")[3]
+        assert "--hostlist={LISTS}list-google.txt" in google13
+        assert "--dpi-desync-hostfakesplit-mod=host=www.google.com" in google13
+        # все упомянутые файлы запакованы (build_args подставляет пути)
+        for name in ("alt11", "alt13"):
+            for a in build_args(name):
+                assert "{BIN}" not in a and "{LISTS}" not in a
+
     def test_payloads_shape(self):
         """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
         Discord Voice IP Discovery начинается с type 0x0001."""
@@ -1631,6 +1689,9 @@ class TestZapret:
             # v4 (12.10): эталонные фейки zapret-discord для демок
             "quic_initial_www_google_com.bin", "ACTIVE_DISCORD_UDP.bin",
             "ACTIVE_GAME_UDP.bin",
+            # v5 (31.10, 2.4.2): эталонные фейки alt11/alt13 из пакета 1.10.4
+            "tls_clienthello_www_google_com.bin", "tls_clienthello_www_sferum_ru.bin",
+            "tls_clienthello_sochi_park.bin", "stun2.bin",
         }
         for fname, digest in recorded.items():
             data = (BIN_DIR / fname).read_bytes()
@@ -1697,24 +1758,67 @@ class TestZapret:
         assert len(ctl.started) == len(PRESETS)
         assert ctl.stops == len(PRESETS)
 
+    def test_autotest_preferred_verified_stays_running(self, monkeypatch):
+        """2.4.2 (жалоба 31.10): клик стартует сохранённую стратегию,
+        воркер только ПРОВЕРЯЕТ её пробой - успех = ничего не перезапускаем
+        (раньше подбор не запускался вовсе и лампа врала)."""
+        from vpn_launcher.core import zapret as zmod
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        ctl = self._FakeController()
+        ctl.started = ["combo"]  # клик уже стартанул сохранённую
+        name, msg = zmod.run_autotest(
+            ctl, probe_fn=lambda: True, warmup=0, preferred="combo"
+        )
+        assert name == "combo" and "проверена" in msg
+        assert ctl.started == ["combo"]  # не перезапускали
+        assert ctl.stops == 0  # выигравшую не гасим
+
+    def test_autotest_preferred_fails_full_pick_without_it(self, monkeypatch):
+        """Провал проверки preferred: гасим её, полный подбор БЕЗ неё
+        (она уже проверена - не тратим на неё цикл), первый кандидат
+        выигрывает."""
+        from vpn_launcher.core import zapret as zmod
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        monkeypatch.setattr(
+            zmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        ctl = self._FakeController()
+        ctl.started = ["combo"]
+        answers = iter([False, True])  # проверка preferred, первый кандидат
+        name, _msg = zmod.run_autotest(
+            ctl, probe_fn=lambda: next(answers), warmup=0, preferred="combo"
+        )
+        first_alt = PRESETS[1]["name"]  # alt11 - первый после combo
+        assert name == first_alt
+        assert ctl.started == ["combo", first_alt]  # combo не перепробовали
+        assert ctl.stops == 1  # гасили только провалившуюся preferred
+
     def test_zapret_worker_emits_done(self, monkeypatch):
         """regression (12.10): в workers не было импорта run_autotest -
         воркер падал NameError сразу после UAC, подбор вообще не шёл.
-        run() должен дойти до run_autotest и эмитнуть done(имя, текст)."""
+        run() должен дойти до run_autotest и эмитнуть done(имя, текст);
+        2.4.2: воркер пробрасывает preferred (проверка сохранённой)."""
         from vpn_launcher import workers as wmod
         from vpn_launcher.workers import ZapretWorker
 
         assert hasattr(wmod, "run_autotest"), "импорт run_autotest пропал"
-        monkeypatch.setattr(
-            wmod,
-            "run_autotest",
-            lambda ctl, progress=None: ("general", "ok"),
-        )
-        worker = ZapretWorker(object())
+        seen: list[str | None] = []
+
+        def fake_autotest(ctl, progress=None, preferred=None):
+            seen.append(preferred)
+            return ("general", "ok")
+
+        monkeypatch.setattr(wmod, "run_autotest", fake_autotest)
+        worker = ZapretWorker(object(), preferred="combo")
         captured: list[tuple[str, str]] = []
         worker.done.connect(lambda name, msg: captured.append((name, msg)))
         worker.run()  # прямой вызов, без QThread.start()
         assert captured == [("general", "ok")]
+        assert seen == ["combo"]  # preferred дошёл до run_autotest
 
     def test_probe_http_4xx_counts_as_reachable(self, monkeypatch):
         """regression (12.10): шлюз Discord отвечает 404 - это ПРОХОДИМОСТЬ,
@@ -1842,7 +1946,8 @@ class TestZapret:
     def test_zapret_click_replaces_foreign_winws(self, win, monkeypatch):
         """13.10 (диагностика): чужой winws держал тот же фильтр - наш не
         вставал, кнопка не загоралась. Клик спрашивает, по согласию
-        завершает чужой и запускает свой."""
+        завершает чужой и запускает свой; 2.4.2: воркеру передаётся
+        preferred (проверка пробой вместо слепого доверия зелёной лампе)."""
         from vpn_launcher.ui import window as wmod
 
         state = {"foreign": True}
@@ -1864,6 +1969,8 @@ class TestZapret:
         monkeypatch.setattr(
             win._zapret, "start", lambda name: started.append(name) or True
         )
+        picks: list = []
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: picks.append(preferred))
         win.state["zapretStrategy"] = "combo"
 
         win._zapret_click()
@@ -1871,6 +1978,31 @@ class TestZapret:
         assert win._confirms, "нужно подтверждение на завершение чужого"
         assert killed, "чужой winws должен быть завершён"
         assert started == ["combo"], "после очистки должен стартовать свой"
+        # 2.4.2: не просто _zapret_sync(), а проверка пробой (preferred)
+        assert picks == ["combo"], "сохранённая стратегия должна проверяться"
+
+    def test_zapret_click_no_saved_strategy_full_pick(self, win, monkeypatch):
+        """2.4.2: без сохранённой стратегии клик идёт в полный автоподбор
+        (preferred не передаётся - подбор с нуля)."""
+        from vpn_launcher.ui import window as wmod
+
+        monkeypatch.setattr(wmod, "is_elevated", lambda: True)
+        monkeypatch.setattr(
+            wmod, "foreign_winws_running", lambda own_pid=None: False
+        )
+        started: list = []
+        monkeypatch.setattr(win._zapret, "running", lambda: False)
+        monkeypatch.setattr(
+            win._zapret, "start", lambda name: started.append(name) or True
+        )
+        picks: list = []
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: picks.append(preferred))
+        win.state["zapretStrategy"] = ""
+
+        win._zapret_click()
+
+        assert started == [], "без сохранённой клик сам не стартует стратегию"
+        assert picks == [None], "идём в полный автоподбор"
 
     def test_zapret_click_decline_foreign_keeps_status(self, win, monkeypatch):
         """Отказ в диалоге = ничего не убиваем, но причина в статусе."""

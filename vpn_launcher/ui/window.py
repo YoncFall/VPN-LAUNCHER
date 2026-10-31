@@ -499,6 +499,9 @@ class MainWindow(QWidget):
         12.10 (просьба): тексты про обход убраны из строки статуса -
         состояние показывают лампа DPI и ракета (ok/warn/off); строка
         осталась для VPN и редких ошибок запуска.
+        2.4.2 (жалоба 31.10): сохранённая стратегия стартует мгновенно,
+        но воркер сразу проверяет её пробой - при провале автоподбор
+        продолжается сам (зелёная лампа больше не врёт).
         """
         if self._zapret.running():
             self._zapret.stop()
@@ -543,7 +546,11 @@ class MainWindow(QWidget):
                     theme.DANGER,
                 )
                 return
-            self._zapret_sync()
+            # 2.4.2 (жалоба 31.10): раньше клик молча оставлял сохранённую
+            # стратегию и дальше ничего не проверял - лампа врала зелёным,
+            # пока Discord/YouTube не открывались. Теперь воркер проверяет
+            # её пробой, при провале сам идёт в полный автоподбор.
+            self._zapret_pick(preferred=strategy)
         else:
             self._zapret_pick()
 
@@ -590,17 +597,25 @@ class MainWindow(QWidget):
             release_window_shown_event(ready)
         self.close()
 
-    def _zapret_pick(self) -> None:
-        """Автоподбор: гоняет стратегии, пока пробы не пройдут (ПКМ тоже)."""
+    def _zapret_pick(self, preferred: str | None = None) -> None:
+        """Автоподбор: гоняет стратегии, пока пробы не пройдут (ПКМ тоже).
+
+        preferred - уже запущенная сохранённая стратегия (клик): не гасим
+        её, воркер проверяет пробой, при провале - полный подбор без неё
+        (2.4.2). ПКМ/bridge зовут без аргумента - принудительный репик.
+        """
         if not is_elevated():
             self._zapret_elevate()
             return
-        if self._zapret.running():
+        if preferred is None and self._zapret.running():
             self._zapret.stop()
-        write_log("zapret: autotest worker starting")
+        write_log(
+            "zapret: autotest worker starting"
+            + (f" (verify '{preferred}')" if preferred else "")
+        )
         self.btn_zapret.setEnabled(False)
-        self._zapret_sync()  # лампа DPI - warn+пульс (идёт подбор)
-        self._zapret_worker = ZapretWorker(self._zapret)
+        self._zapret_sync()  # лампа DPI - warn+пульс (идёт проверка/подбор)
+        self._zapret_worker = ZapretWorker(self._zapret, preferred=preferred)
         self._zapret_worker.done.connect(self._zapret_done)
         self._zapret_worker.start()
 

@@ -2,9 +2,12 @@
 """Обход блокировок (zapret/winws): движок, стратегии, автоподбор.
 
 2.2.0 (просьба 02.10): кнопка в лаунчере сама подбирает рабочую стратегию
-обхода DPI. winws запускается с одной из 22 стратегий (zapret_presets),
+обхода DPI. winws запускается с одной из 12 стратегий (zapret_presets),
 проверяются реальные сайты (Discord/YouTube), первая сработавшая
 сохраняется в state['zapretStrategy'] и остаётся работать.
+2.4.2 (жалоба 31.10): клик сохранённой стратегией больше не слепо ей
+доверяет - run_autotest(preferred=...) проверяет её пробой и при провале
+сам уходит в полный подбор (иначе лампа DPI врала зелёным).
 
 Файлы движка лежат в <корень>/zapret/ (подкаталоги bin: winws.exe,
 WinDivert, полезные грузы .bin; lists: списки целей). Это второй движок
@@ -311,19 +314,41 @@ def run_autotest(
     probe_fn: Callable[[], bool] | None = None,
     progress: Callable[[str], None] | None = None,
     warmup: float = WARMUP,
+    preferred: str | None = None,
 ) -> tuple[str | None, str]:
     """Подбор рабочей стратегии. -> (имя | None, сообщение для статуса).
 
     Порядок: чужой winws -> отказ; блокировок нет -> combo (PRESETS[0],
     базовая); иначе - первая стратегия, после которой пробы проходят. При
     успехе выигравшая стратегия ОСТАЁТСЯ запущенной (controller не останавливается).
+
+    2.4.2 (preferred): клик стартует сохранённую стратегию мгновенно,
+    воркер только ПРОВЕРЯЕТ её пробой - раньше подбор не запускался вовсе
+    и зелёная лампа врала (жалоба 31.10 «нажимал кнопку DPI, но не нашёлся
+    рабочий алгоритм»). При провале preferred останавливается, идёт полный
+    подбор без неё (она уже проверена). Чужой winws проверяется с учётом
+    своего pid - наш экземпляр поднимать/гасить будет клик, не автоподбор.
     """
     probe_fn = probe_fn or probe
-    if foreign_winws_running():
+    if foreign_winws_running(getattr(controller, "pid", None)):
         write_log("zapret: foreign winws running - autotest aborted")
         return None, "Запущен другой обход (winws) - закрой его и повтори"
 
-    if probe_fn():
+    if preferred is not None:
+        if not controller.running():
+            try:
+                controller.start(preferred)
+            except OSError as exc:
+                return None, f"Не удалось запустить winws: {exc}"
+        if progress:
+            progress(f"Проверяю {preferred}...")
+        time.sleep(warmup)
+        if probe_fn():
+            write_log(f"zapret: saved strategy '{preferred}' verified")
+            return preferred, f"Рабочая стратегия: {preferred} (проверена)"
+        write_log(f"zapret: saved strategy '{preferred}' failed probe")
+        controller.stop()
+    elif probe_fn():
         # блокировок не видно (или они уже сняты) - базовая стратегия
         write_log("zapret: baseline probe passed, no blocks visible")
         name = PRESETS[0]["name"]
@@ -334,8 +359,10 @@ def run_autotest(
         return name, f"Блокировок не обнаружено - оставляю {name}"
 
     write_log("zapret: blocks detected, iterating strategies")
-    total = len(PRESETS)
-    for i, preset in enumerate(PRESETS, 1):
+    skip = {preferred} if preferred else set()
+    todo = [p for p in PRESETS if p["name"] not in skip]
+    total = len(todo)
+    for i, preset in enumerate(todo, 1):
         if progress:
             progress(f"Подбор обхода: {i}/{total} ({preset['name']})...")
         try:

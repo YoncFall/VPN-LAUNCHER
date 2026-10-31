@@ -17,6 +17,17 @@ v3 (12.10.2026) - КОМБО = РЕПЛИКА ПРОВЕРЕННОЙ КОНФИ�
   Комбо теперь повторяет её профиль в профиль ( QUIC, голос/STUN,
   медиа-альт-порты, google-группа, основной список, ipset-заглушки).
 
+v5 (31.10.2026) - ALT11/ALT13 ИЗ ПАКЕТА 1.10.4 (ПОИСК РАБОЧИХ):
+  Жалоба 31.10: «нажимал кнопку DPI, но видимо не нашёлся рабочий
+  алгоритм». combo (реплика ALT9) на части сетей не справляется -
+  добавили две свежие стратегии из zapret-discord-youtube 1.10.4
+  (20.10.2026), стоящие сразу после combo: alt11 (fake+multisplit c
+  seqovl-наложением 664/681 и фейками sferum/stun2) и alt13
+  (hostfakesplit с подменой хоста на mail.ru/www.google.com и фейками
+  sochi_park/stun2). По 7 профилей каждая (GameFilter-профили пакета
+  убраны: игры у нас идут через VPN/sing-box, им нужен свой winws).
+  Фейки .bin скопированы из пакета байт-в-байт (хэши в VERSION.txt).
+
 v4 (12.10.2026) - ФИКС ДЕМОК ЭКРАНА (Discord, ошибка 1007):
   Часть демонстраций экрана не грузилась с combo, хотя ALT9 грузил.
   Два расхождения с эталоном найдены и выровнены: (1) fake-файлы были
@@ -54,6 +65,12 @@ _FAKE_TLS = "+0@{BIN}tls-clienthello-google.bin"
 # gen_payloads-фейки давали мимо. Хэши - в zapret/VERSION.txt.
 _FAKE_QUIC = "+0@{BIN}quic_initial_www_google_com.bin"
 _FAKE_DISCORD = "+0@{BIN}ACTIVE_DISCORD_UDP.bin"
+# v5 (31.10.2026): эталонные фейки пакета zapret-discord-youtube 1.10.4
+# для стратегий alt11/alt13; скопированы байт-в-байт (хэши в VERSION.txt)
+_FAKE_GGLE = "+0@{BIN}tls_clienthello_www_google_com.bin"   # ClientHello google.com (681B)
+_FAKE_SFERUM = "+0@{BIN}tls_clienthello_www_sferum_ru.bin"  # ClientHello sferum.ru (661B)
+_FAKE_SOCHI = "+0@{BIN}tls_clienthello_sochi_park.bin"      # ClientHello sochi-park (244B)
+_FAKE_STUN2 = "+0@{BIN}stun2.bin"                           # STUN-пакет (120B)
 # паттерн seqovl-наложения: любой валидный ClientHello (наш google)
 _SEQOVL_PATTERN = "+0@{BIN}tls-clienthello-google.bin"
 
@@ -356,8 +373,178 @@ def _combo_chain() -> list[str]:
     ]
 
 
+# --- v5 (31.10.2026): реплики zapret-discord-youtube 1.10.4 ---------------
+# Источник: батники general (ALT11).bat / general (ALT13).bat рабочего
+# пакета 1.10.4 (20.10.2026). Копируем ПРОФИЛЬ-В-ПРОФИЛЬ, кроме
+# GameFilter-профилей пакета (игры у нас идут через VPN/sing-box - им
+# нужен свой winws). Фейки .bin скопированы из пакета байт-в-байт
+# (хэши - в zapret/VERSION.txt).
+
+# QUIC в alt11/alt13: repeats=11 (в комбо - 6), тот же эталонный фейк
+_QUIC_TECH_ALT = (
+    "--dpi-desync=fake",
+    "--dpi-desync-repeats=11",
+    f"--dpi-desync-fake-quic={_FAKE_QUIC}",
+)
+
+
+def _alt11_chain() -> list[str]:
+    """alt11 = реплика «general (ALT11)» пакета 1.10.4 (7 профилей).
+
+    Отличия от combo: QUIC с repeats=11; медиа/гугл на fake+multisplit
+    c seqovl-наложением 681 и фейком ClientHello google.com; основной
+    профиль на seqovl 664 с ДВОЙНЫМ фейком (stun2 + sferum) и
+    fake-http; голос как в combo. Источник аргументов - сам батник
+    (см. докстринг модуля, v5)."""
+    media_google_tech = (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=681",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-repeats=8",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_GGLE}",
+        f"--dpi-desync-fake-tls={_FAKE_GGLE}",
+    )
+    main_tech = (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=664",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-repeats=8",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_SFERUM}",
+        f"--dpi-desync-fake-tls={_FAKE_STUN2}",
+        f"--dpi-desync-fake-tls={_FAKE_SFERUM}",
+        f"--dpi-desync-fake-http={_FAKE_SFERUM}",
+    )
+    return [
+        "--comment=vpl-alt11",
+        *_WF,
+        # 1. QUIC 443 (HTTP/3: youtube и все h3-хосты списка)
+        "--filter-udp=443",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *_QUIC_TECH_ALT,
+        # 2. Discord-голос / STUN (звонки)
+        "--new",
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun",
+        *_VOICE_TECH_COMBO,  # в ALT11 голос = комбо (repeats=6)
+        # 3. discord.media на альт-портах (стримы/звонки не на 443)
+        "--new",
+        "--filter-tcp=2053,2083,2087,2096,8443",
+        "--hostlist-domains=discord.media",
+        *media_google_tech,
+        # 4. Google/YouTube группа - свой список, нулевой ip-id
+        "--new",
+        "--filter-tcp=443",
+        "--hostlist={LISTS}list-google.txt",
+        "--ip-id=zero",
+        *media_google_tech,
+        # 5. Основной список (дискорд и прочее) 80+443
+        "--new",
+        "--filter-tcp=80,443",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *main_tech,
+        # 6. ipset: QUIC по IP (заглушка, см. ipset-all.txt)
+        "--new",
+        "--filter-udp=443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_QUIC_TECH_ALT,
+        # 7. ipset: TCP 80/443/8443 по IP (заглушка)
+        "--new",
+        "--filter-tcp=80,443,8443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *main_tech,
+    ]
+
+
+def _alt13_chain() -> list[str]:
+    """alt13 = реплика «general (ALT13)» пакета 1.10.4 (7 профилей).
+
+    Отличия от alt11: гугл на hostfakesplit (без ip-id), основной
+    профиль на fake+hostfakesplit с подменой хоста на mail.ru и фейками
+    sochi_park/stun2 (repeats=5), голос repeats=5, медиа repeats=7.
+    Источник аргументов - сам батник (см. докстринг модуля, v5)."""
+    media_tech = (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=681",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-repeats=7",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_GGLE}",
+        f"--dpi-desync-fake-tls={_FAKE_GGLE}",
+    )
+    google_tech = (
+        "--dpi-desync=hostfakesplit",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-hostfakesplit-mod=host=www.google.com",
+    )
+    main_tech = (
+        "--dpi-desync=fake,hostfakesplit",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-hostfakesplit-mod=host=mail.ru,altorder=1",
+        "--dpi-desync-repeats=5",
+        f"--dpi-desync-fake-tls={_FAKE_SOCHI}",
+        f"--dpi-desync-fake-tls={_FAKE_STUN2}",
+        f"--dpi-desync-fake-http={_FAKE_SOCHI}",
+    )
+    voice_tech = (
+        "--dpi-desync=fake",
+        "--dpi-desync-repeats=5",
+        f"--dpi-desync-fake-discord={_FAKE_DISCORD}",
+        f"--dpi-desync-fake-stun={_FAKE_DISCORD}",
+    )
+    return [
+        "--comment=vpl-alt13",
+        *_WF,
+        # 1. QUIC 443 (HTTP/3)
+        "--filter-udp=443",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *_QUIC_TECH_ALT,
+        # 2. Discord-голос / STUN (звонки)
+        "--new",
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun",
+        *voice_tech,
+        # 3. discord.media на альт-портах
+        "--new",
+        "--filter-tcp=2053,2083,2087,2096,8443",
+        "--hostlist-domains=discord.media",
+        *media_tech,
+        # 4. Google/YouTube группа - свой список
+        "--new",
+        "--filter-tcp=443",
+        "--hostlist={LISTS}list-google.txt",
+        *google_tech,
+        # 5. Основной список (дискорд и прочее) 80+443
+        "--new",
+        "--filter-tcp=80,443",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *main_tech,
+        # 6. ipset: QUIC по IP (заглушка)
+        "--new",
+        "--filter-udp=443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_QUIC_TECH_ALT,
+        # 7. ipset: TCP 80/443/8443 по IP (заглушка)
+        "--new",
+        "--filter-tcp=80,443,8443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *main_tech,
+    ]
+
+
 PRESETS: list[dict] = [
     {"name": "combo",         "args": _combo_chain()},
+    {"name": "alt11",         "args": _alt11_chain()},
+    {"name": "alt13",         "args": _alt13_chain()},
     {"name": "general",       "args": _chain("general", _tls_seqovl())},
     {"name": "fake",          "args": _chain("fake", _tls_fake())},
     {"name": "multisplit",    "args": _chain("multisplit", _tls_multisplit())},

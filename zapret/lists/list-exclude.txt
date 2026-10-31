@@ -26,8 +26,10 @@ playvalorant.com
 battlepass.ru
 tanki.su
 lesta.ru
+lesta.pw
 korabli.su
 tanksblitz.ru
+reg.ru
 multimc.org
 
 # software vendors / utilities
@@ -98,8 +100,6 @@ odkl.ru
 gosuslugi.ru
 gov.ru
 nalog.ru
-nalog.gov.ru
-pfr.gov.ru
 spb.ru
 mos.ru
 

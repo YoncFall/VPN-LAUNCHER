@@ -98,19 +98,24 @@ class ZapretWorker(QThread):
 
     2.2.0: winws стартует/останавливается в core.zapret.run_autotest, пробы
     сети идут здесь - окно не замерзает на несколько минут подбора.
+    2.4.2: preferred - уже запущенная сохранённая стратегия (клик): её
+    быстрая проверка пробой, при провале - полный подбор (без неё).
     """
 
     progress = Signal(str)
     done = Signal(str, str)
 
-    def __init__(self, controller) -> None:
+    def __init__(self, controller, preferred: str | None = None) -> None:
         super().__init__()
         self._controller = controller
+        self._preferred = preferred
 
     def run(self) -> None:
         try:
             name, msg = run_autotest(
-                self._controller, progress=lambda t: self.progress.emit(t)
+                self._controller,
+                progress=lambda t: self.progress.emit(t),
+                preferred=self._preferred,
             )
             self.done.emit(name or "", msg)
         except Exception as exc:

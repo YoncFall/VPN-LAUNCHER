@@ -18,6 +18,10 @@
 #   скопированы из рабочего пакета zapret-discord (эталон пользователя,
 #   вживую грузит демки экрана; исходный пакет НЕ изменялся - хэши
 #   байт-в-байт совпадают с источником).
+#   tls_clienthello_www_google_com / tls_clienthello_www_sferum_ru /
+#   tls_clienthello_sochi_park / stun2 (2.4.2, стратегии alt11/alt13) -
+#   скопированы из zapret-discord-youtube 1.10.4 (Flowseal, 20.10.2026);
+#   источник только читался, не изменялся - хэши байт-в-байт совпадают.
 a14bff1df6234ea555d2e0c61b589f0707c0b12d6c9b7eeccda76012154996e8  winws.exe
 103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b  cygwin1.dll
 c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2  WinDivert.dll
@@ -29,3 +33,7 @@ c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2  WinDivert.dll
 2fe18b3bd20807d36704d0b072092ee49ae84edca907a4420ab9a0f0f28fddcf  ACTIVE_DISCORD_UDP.bin
 e065870cb0d13152e6132807bbf42218a9e7cd8d96f5602b61674cc540f3a56e  ACTIVE_GAME_UDP.bin
 f4589c57749f956bb30538197a521d7005f8b0a8723b4707e72405e51ddac50a  quic_initial_www_google_com.bin
+936c2bee4cfb80aa3c426b2dcbcc834b3fbcd1adb17172959dc569c73a14275c  tls_clienthello_www_google_com.bin
+e6dd8d724eecc6a7340bf64e2ebec81c60bc4e078c6f702b4b6ba9bf184180ad  tls_clienthello_www_sferum_ru.bin
+ad552922acfe029521da884ea29f4bb28bb6bdcee9b1a70b46adbfd266c11d4d  tls_clienthello_sochi_park.bin
+b7c2497496039c541f7337ac8536813f0a1cf52363ab2faa5213b7816d458813  stun2.bin
