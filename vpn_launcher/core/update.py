@@ -66,9 +66,14 @@ def pick_app(payload: dict, slug: str) -> dict | None:
 
 
 def parse_latest(payload_text: str, slug: str, current: str) -> UpdateInfo | None:
-    """Разобрать apps.json; UpdateInfo только если там версия новее current."""
+    """Разобрать apps.json; UpdateInfo только если там версия новее current.
+
+    Ведущий UTF-8 BOM срезается: PowerShell `Set-Content -Encoding UTF8`
+    пишет файл с BOM, а json.loads на нём кидает ValueError - из-за этого
+    апдейтер молча не увидел обновление 2.4.2 (инцидент 31.10.2026).
+    """
     try:
-        payload = json.loads(payload_text)
+        payload = json.loads(str(payload_text).lstrip("\ufeff"))
     except (ValueError, TypeError):
         return None
     app = pick_app(payload, slug)

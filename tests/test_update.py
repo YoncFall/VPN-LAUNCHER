@@ -66,6 +66,45 @@ def test_parse_latest_broken_json_is_none():
     assert upd.parse_latest(_APPS_JSON, "нет-такого", "1.0") is None
 
 
+def test_parse_latest_utf8_bom_is_tolerated():
+    """BOM перед JSON (PowerShell пишет с BOM) не должен ломать разбор.
+
+    Регрессия инцидента 31.10.2026: BOM в apps.json молча гасил плашку
+    обновления у всех установленных копий.
+    """
+    bom_json = "\ufeff" + _APPS_JSON.lstrip("\n")
+    info = upd.parse_latest(bom_json, "vpn-launcher", "2.3.3")
+    assert info is not None
+    assert info.version == "2.4.0"
+
+
+class _FakeResp:
+    """Мини-заглушка urlopen-ответа: только read()/контекст."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+    def __enter__(self):  # noqa: ANN201
+        return self
+
+    def __exit__(self, *_a):  # noqa: ANN002, ANN201
+        return False
+
+
+def test_fetch_latest_tolerates_utf8_bom_bytes(monkeypatch):  # noqa: ANN001
+    """Путь целиком: байты с BOM из сети -> UpdateInfo, а не молчаливый None."""
+    data = ("\ufeff" + _APPS_JSON.lstrip("\n")).encode("utf-8")
+    monkeypatch.setattr(
+        upd.urllib.request, "urlopen", lambda *_a, **_k: _FakeResp(data)
+    )
+    info = upd.fetch_latest(current="2.3.3")
+    assert info is not None
+    assert info.version == "2.4.0"
+
+
 def test_fetch_latest_offline_is_none(monkeypatch):  # noqa: ANN001
     def boom(*_a, **_k):
         raise OSError("offline")
