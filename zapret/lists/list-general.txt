@@ -69,6 +69,17 @@ localizeapi.com
 klipy.com
 live-video.net
 
+# Telegram (09-10.11.2026: массовая блокировка по IP). Домены помогают
+# там, где фильтр ещё по DNS/SNI (веб-версия, ссылки, превью); полный
+# обход IP-блокировки даёт только VPN (см. sing-box: TELEGRAM_CIDRS).
+telegram.org
+telegram.me
+telegram.dog
+t.me
+telegra.ph
+telegram-cdn.org
+telesco.pe
+
 # YouTube (also covered by list-google.txt; kept here so strategies
 # that use only list-general still reach youtube)
 youtube.com

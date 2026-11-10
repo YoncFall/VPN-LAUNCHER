@@ -97,6 +97,35 @@ CLEAN_DOMAINS: tuple[str, ...] = (
     "music.yandex.ru",
 )
 
+# Telegram: с 09-10.11.2026 провайдеры массово режут его по IP (SYN в «чёрную
+# дыру» до всех диапазонов) — никакой DPI-обход это не лечит, спасает только
+# туннель. Поэтому трафик Telegram ВСЕГДА идёт через proxy-group, в любом
+# режиме списка приложений (включая include, где остальное final=direct).
+# Домены — фронты (веб-версия, ссылки, превью); диапазоны — официальный
+# список Telegram: https://core.telegram.org/resources/cidr.txt
+# (IPv4 + IPv6; IPv6 не резолвится на машинах без v6, но правилу не мешает).
+TELEGRAM_DOMAINS: tuple[str, ...] = (
+    "telegram.org", "telegram.me", "telegram.dog", "t.me",
+    "telegra.ph", "telegram-cdn.org", "telesco.pe",
+)
+
+TELEGRAM_CIDRS: tuple[str, ...] = (
+    "91.105.192.0/23",
+    "91.108.4.0/22",
+    "91.108.8.0/22",
+    "91.108.12.0/22",
+    "91.108.16.0/22",
+    "91.108.20.0/22",
+    "91.108.56.0/22",
+    "149.154.160.0/20",
+    "185.76.151.0/24",
+    "2001:b28:f23c::/48",
+    "2001:b28:f23d::/48",
+    "2001:b28:f23f::/48",
+    "2001:67c:4e8::/48",
+    "2a0a:f280::/32",
+)
+
 # Режимы работы списка процессов (см. docstring модуля):
 #   exclude - классика PS 1.0.6: перечисленные идут мимо VPN, остальное через;
 #   include - зеркало: через VPN идут только перечисленные, остальное напрямую.
@@ -242,6 +271,24 @@ def build_sing_box_config(
         "domain": list(CLEAN_DOMAINS),
         "domain_suffix": ["." + d for d in CLEAN_DOMAINS],
         "outbound": "direct",
+    })
+
+    # Telegram -> ВСЕГДА через VPN (10.11.2026, массовая IP-блокировка у
+    # провайдеров): правило ДО per-app, чтобы работало и в exclude, и в
+    # include (там final=direct, и без правила телеграм уходил бы в чёрную
+    # дыру). Два правила: домены (веб/ссылки/превью) и диапазоны (клиент,
+    # медиа, звонки) — в sing-box условия в одном правиле складываются по И,
+    # поэтому домен и IP разделены. Диапазоны из TELEGRAM_CIDRS.
+    rules.append({
+        "action": "route",
+        "domain": list(TELEGRAM_DOMAINS),
+        "domain_suffix": ["." + d for d in TELEGRAM_DOMAINS],
+        "outbound": "proxy-group",
+    })
+    rules.append({
+        "action": "route",
+        "ip_cidr": list(TELEGRAM_CIDRS),
+        "outbound": "proxy-group",
     })
 
     # per-app: один список, два направления (см. докстринг модуля).

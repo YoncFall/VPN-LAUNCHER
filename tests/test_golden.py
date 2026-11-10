@@ -65,6 +65,14 @@ def _ps_parity_view(built: dict) -> dict:
     # IP туннеля. Для сверки с эталоном оно вырезается; фактическое содержимое
     # проверяет tests/test_config.py::test_clean_domains_rule.
     out["route"]["rules"] = [r for r in out["route"]["rules"] if "domain" not in r]
+    # Правило Telegram -> VPN (10.11.2026, массовая IP-блокировка у
+    # провайдеров) - тоже сознательное отклонение от PS 1.0.6: вырезаем его
+    # ip_cidr-правило (доменное уже вырезано выше по "domain"). Фактическое
+    # содержимое проверяет tests/test_config.py::TestTelegramRouting.
+    tg = set(cfg.TELEGRAM_CIDRS)
+    out["route"]["rules"] = [
+        r for r in out["route"]["rules"] if set(r.get("ip_cidr", ())) != tg
+    ]
     for inbound in out.get("inbounds", []):
         if inbound.get("type") == "tun":
             inbound["strict_route"] = True

@@ -12,6 +12,8 @@ from vpn_launcher.core.config import (
     APP_MODE_INCLUDE,
     CLEAN_DOMAINS,
     GAME_SAFE_PROCESSES,
+    TELEGRAM_CIDRS,
+    TELEGRAM_DOMAINS,
     ConfigError,
     build_sing_box_config,
     write_config,
@@ -205,6 +207,80 @@ class TestCleanDomains:
         assert clean_idx < proc_idx
 
 
+class TestTelegramRouting:
+    """Правило Telegram -> ВСЕГДА через VPN (10.11.2026).
+
+    С 09-10.11.2026 провайдеры массово блокируют Telegram по IP: SYN до его
+    диапазонов не доходит, DPI-обход бессилен. Поэтому трафик Telegram обязан
+    уходить в proxy-group в любом режиме, в том числе include (final=direct) -
+    иначе пользователи теряют мессенджер даже при включённом VPN.
+    """
+
+    def test_domain_rule_in_both_modes_and_proxy_group(self):
+        for mode in ("tun", "proxy"):
+            c = build_sing_box_config(_nodes(), mode=mode)
+            tg = next(
+                r for r in c["route"]["rules"]
+                if r.get("outbound") == "proxy-group" and "domain" in r
+            )
+            assert tg["action"] == "route"
+            assert tg["domain"] == list(TELEGRAM_DOMAINS)
+            assert tg["domain_suffix"] == ["." + d for d in TELEGRAM_DOMAINS]
+            assert "telegram.org" in tg["domain"]
+            assert "t.me" in tg["domain"]
+            # web.telegram.org покрыт suffix'ом .telegram.org, отдельной
+            # строки в domain быть не должно (это не apex)
+            assert "web.telegram.org" not in tg["domain"]
+
+    def test_cidr_rule_in_both_modes_and_proxy_group(self):
+        for mode in ("tun", "proxy"):
+            c = build_sing_box_config(_nodes(), mode=mode)
+            tg = [
+                r for r in c["route"]["rules"]
+                if set(r.get("ip_cidr", ())) == set(TELEGRAM_CIDRS)
+            ]
+            assert len(tg) == 1
+            assert tg[0]["action"] == "route"
+            assert tg[0]["outbound"] == "proxy-group"
+            assert "149.154.160.0/20" in tg[0]["ip_cidr"]
+            assert "91.108.56.0/22" in tg[0]["ip_cidr"]
+
+    def test_rule_precedes_per_app_in_every_mode(self):
+        for app_mode in (APP_MODE_EXCLUDE, APP_MODE_INCLUDE):
+            for mode in ("tun", "proxy"):
+                c = build_sing_box_config(
+                    _nodes(), mode=mode, app_list=("mygame.exe",),
+                    app_mode=app_mode,
+                )
+                rules = c["route"]["rules"]
+                tg_idx = next(
+                    i for i, r in enumerate(rules)
+                    if set(r.get("ip_cidr", ())) == set(TELEGRAM_CIDRS)
+                )
+                procs = [i for i, r in enumerate(rules) if "process_name" in r]
+                if procs:  # proxy-режим правил процессов не имеет
+                    assert tg_idx < procs[0]
+
+    def test_works_even_when_include_final_is_direct(self):
+        # Главный сценарий жалобы 10.11.2026: режим include, в списке только
+        # OpenCode - остальное (включая telegram) шло бы direct в чёрную дыру.
+        c = build_sing_box_config(
+            _nodes(), mode="tun", app_list=("OpenCode.exe",),
+            app_mode=APP_MODE_INCLUDE,
+        )
+        assert c["route"]["final"] == "direct"
+        tg = next(
+            r for r in c["route"]["rules"]
+            if set(r.get("ip_cidr", ())) == set(TELEGRAM_CIDRS)
+        )
+        assert tg["outbound"] == "proxy-group"
+
+    def test_local_cidr_rule_stays_last(self):
+        # домен-правило Telegram не должно сдвигать правило локальных сетей
+        c = build_sing_box_config(_nodes(), mode="tun", app_list=("mygame.exe",))
+        assert c["route"]["rules"][-1]["ip_cidr"][0] == "127.0.0.0/8"
+
+
 class TestAppModeInclude:
     """Режим include (30.09.2026, новая фича): через VPN идут только выбранные.
 
@@ -241,7 +317,9 @@ class TestAppModeInclude:
         )
         rules = c["route"]["rules"]
         assert [r.get("action") for r in rules[:2]] == ["sniff", "hijack-dns"]
-        assert "process_name" in rules[3]
+        proc_idx = next(i for i, r in enumerate(rules) if "process_name" in r)
+        assert proc_idx == 5  # после CLEAN_DOMAINS и двух правил Telegram
+        assert "process_name" in rules[proc_idx]
         assert rules[-1]["ip_cidr"][0] == "127.0.0.0/8"
         assert rules[-1]["outbound"] == "direct"
 
@@ -300,7 +378,10 @@ class TestAppModeInclude:
         assert voice["action"] == "route"
         assert voice["outbound"] == "direct"
         assert voice["process_name"] == ["Discord.exe"]
-        main = next(r for r in rules if r.get("outbound") == "proxy-group")
+        main = next(
+            r for r in rules
+            if r.get("outbound") == "proxy-group" and "process_name" in r
+        )
         assert rules.index(voice) < rules.index(main)
         # текст/медиа Discord и Edge остаются в VPN
         assert main["process_name"] == ["Discord.exe", "msedge.exe"]
