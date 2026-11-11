@@ -313,6 +313,7 @@ class Bridge(QObject):
                 }
             )
         return {
+            "appVersion": __version__,
             "subUrl": win.field_sub.text(),
             "procText": win.picker_proc.text(),
             "servers": servers,

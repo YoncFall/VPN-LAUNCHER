@@ -68,7 +68,16 @@
       this.renderButtons(s);
       this.renderDpi(s);
       this.renderUpdate(s);
+      this.renderVersion(s);
       if (first) this.buildDrop(s.picker || []);
+    },
+
+    renderVersion(s) {
+      // Версия запущенной копии: «v2.4.4» в шапке (просьба 11.11).
+      const el = $("#appVersion");
+      if (!el) return;
+      const text = s.appVersion ? "v" + s.appVersion : "";
+      if (el.textContent !== text) el.textContent = text;
     },
 
     renderUpdate(s) {

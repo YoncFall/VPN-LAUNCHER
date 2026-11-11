@@ -112,6 +112,7 @@ def test_page_html_has_all_hooks():
         'id="connectionStatusText"',
         'id="dpiLamp"',
         'id="externalIp"',
+        'id="appVersion"',
         'id="rocket"',
         'id="modalLayer"',
         'id="processDrop"',
@@ -156,6 +157,20 @@ def test_page_js_calls_bridge():
         assert call in js, call
     # состояние страница берёт только из моста, не из демо-разметки
     assert "VPL.apply(" in js or "apply(" in js
+
+
+def test_page_shows_app_version():
+    """2.4.4 (просьба 11.11): в шапке видна версия запущенной копии -
+    иначе после тихого обновления непонятно, обновилась ли она."""
+    from vpn_launcher import __version__
+    from vpn_launcher.ui.web.window import assets_dir
+
+    html = (assets_dir() / "app.html").read_text(encoding="utf-8")
+    js = (assets_dir() / "app.js").read_text(encoding="utf-8")
+    assert 'id="appVersion"' in html
+    assert "renderVersion(s)" in js
+    assert "s.appVersion" in js
+    assert __version__.count(".") == 2
 
 
 def test_page_keeps_mockup_glow():
@@ -371,6 +386,9 @@ def test_dpi_lamp_mapping_in_page():
 def test_snapshot_initial_state(web):  # noqa: ANN001
     win, bridge, _page = web
     s = bridge.snapshot()
+    from vpn_launcher import __version__
+
+    assert s["appVersion"] == __version__
     assert s["subUrl"] == ""
     assert s["servers"] == []
     assert s["serverSelected"] == -1

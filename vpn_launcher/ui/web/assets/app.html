@@ -856,6 +856,23 @@ button:disabled {
   letter-spacing: 0;
   text-shadow: none;
 }
+/* Версия приложения в шапке: видно, какая копия запущена (просьба 11.11 -
+   после выпуска 2.4.4 не было понятно, обновилась ли установленная копия).
+   Пустой span скрыт, пока мост не прислал appVersion. */
+.brand-version {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid rgba(167,131,255,.35);
+  border-radius: 999px;
+  background: rgba(167,131,255,.08);
+  color: #b9a6e0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .4px;
+  line-height: 1.5;
+  user-select: text;
+}
+.brand-version:empty { display: none; }
 
 
 /* Cyber Purple: фиолетово-голубой киберпанк */
@@ -1033,6 +1050,7 @@ input, .process-item, .server-row td { user-select: text; }
       </div>
       <span class="brand-name">VPN ЛАУНЧЕР</span>
       <span class="brand-subtitle">by YoncFall</span>
+      <span class="brand-version" id="appVersion" title="Версия приложения"></span>
       <div class="titlebar-spacer"></div>
       <span class="window-light" aria-hidden="true"></span>
       <button class="window-control" id="btnMinimize" type="button" title="Свернуть" aria-label="Свернуть" data-demo="Свернуть окно">
