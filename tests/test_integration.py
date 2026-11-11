@@ -1471,10 +1471,12 @@ class TestZapret:
             return bool(self.started)
 
     def test_presets_packaged_and_valid(self):
-        """12 собственных стратегий (наши комбинации задокументированных
-        опций winws; 2.4.2: combo, alt11, alt13 - реплики пакета 1.10.4,
-        остальные 9 - наши): имена уникальны, combo первая, аргументы
-        целые, winws и все упомянутые файлы запакованы (лежат на диске)."""
+        """16 собственных стратегий (наши комбинации задокументированных
+        опций winws; 2.4.2: combo, alt11, alt13 - реплики пакета 1.10.4;
+        2.4.4: alt2, autotls, badseq, syndata - реплики ALT2/ALT4/ALT5/
+        FAKE TLS AUTO ALT3 того же пакета; остальные 9 - наши): имена
+        уникальны, combo первая, аргументы целые, winws и все упомянутые
+        файлы запакованы (лежат на диске)."""
         from vpn_launcher.core.zapret import (
             BIN_DIR,
             LISTS_DIR,
@@ -1485,7 +1487,7 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert len(names) == 12 and len(set(names)) == 12
+        assert len(names) == 16 and len(set(names)) == 16
         assert names[0] == "combo"
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
@@ -1516,9 +1518,12 @@ class TestZapret:
         хотя winws работал (документация: профили самодостаточны,
         наследования нет). v3: у combo 7 профилей (реплика рабочей
         конфигурации: QUIC, голос, медиа, гугл, основной, 2x ipset);
-        2.4.2: то же у alt11/alt13 (реплики пакета 1.10.4)."""
+        2.4.2: то же у alt11/alt13 (реплики пакета 1.10.4); 2.4.4: то же
+        у alt2/autotls/badseq. syndata - 5 профилей и НАМЕРЕННО без
+        хостлистов в TCP-профиле (ловит весь IPv4 TCP по SYN)."""
         from vpn_launcher.core.zapret_presets import PRESETS
 
+        seven = {"combo", "alt11", "alt13", "alt2", "autotls", "badseq"}
         for preset in PRESETS:
             profiles: list[list[str]] = [[]]
             for a in preset["args"]:
@@ -1526,7 +1531,7 @@ class TestZapret:
                     profiles.append([])
                 else:
                     profiles[-1].append(a)
-            expected = 7 if preset["name"] in ("combo", "alt11", "alt13") else 5
+            expected = 7 if preset["name"] in seven else 5
             assert len(profiles) == expected, preset["name"]
             for i, prof in enumerate(profiles):
                 assert any(a.startswith("--dpi-desync=") for a in prof), (
@@ -1536,6 +1541,20 @@ class TestZapret:
                     a.startswith("--filter-tcp=") or a.startswith("--filter-udp=")
                     for a in prof
                 ), f"{preset['name']} profile#{i}: нет фильтра"
+            if preset["name"] == "syndata":
+                # SYN-профиль на весь IPv4 TCP: без хостлистов, по IP
+                syn = [
+                    p for p in profiles
+                    if "--filter-l3=ipv4" in p
+                ]
+                assert syn, "syndata: нет IPv4-профиля"
+                assert any(
+                    "--dpi-desync=syndata,multidisorder" in p for p in syn
+                )
+                assert not any(
+                    a.startswith("--hostlist=") for a in syn[0]
+                ), "syndata: хостлисты не нужны"
+                continue
             # TLS-профиль (443) обязан целиться списком хостов, а не ловить
             # всё; у combo он не первый (впереди QUIC и голос)
             tls_profs = [p for p in profiles if "--filter-tcp=443" in p]
@@ -1606,7 +1625,7 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert names[1:3] == ["alt11", "alt13"]
+        assert names[4:6] == ["alt11", "alt13"]
         by_name = {p["name"]: p["args"] for p in PRESETS}
 
         def profiles_of(name: str) -> list[list[str]]:
@@ -1652,6 +1671,56 @@ class TestZapret:
         for name in ("alt11", "alt13"):
             for a in build_args(name):
                 assert "{BIN}" not in a and "{LISTS}" not in a
+
+    def test_incident_2_4_4_presets(self):
+        """2.4.4 (инцидент Discord 08-10.11.2026): alt2/autotls/badseq/
+        syndata - реплики ALT2/FAKE TLS AUTO ALT3/ALT4/ALT5 пакета 1.10.4.
+        Проверяем их отличительные механики, ради которых они добавлены."""
+        from vpn_launcher.core.zapret import preset_names
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        assert preset_names()[1:4] == ["alt2", "autotls", "badseq"]
+        assert preset_names()[-1] == "syndata"
+        by_name = {p["name"]: p["args"] for p in PRESETS}
+
+        def profiles_of(name: str) -> list[list[str]]:
+            profs: list[list[str]] = [[]]
+            for a in by_name[name]:
+                if a == "--new":
+                    profs.append([])
+                else:
+                    profs[-1].append(a)
+            return profs
+
+        # alt2: seqovl 652 / split-pos 2 и НИ ОДНОГО fake в основном профиле
+        main2 = profiles_of("alt2")[4]
+        assert "--dpi-desync=multisplit" in main2
+        assert "--dpi-desync-split-seqovl=652" in main2
+        assert "--dpi-desync-split-pos=2" in main2
+        assert not any(a.startswith("--dpi-desync-fake") for a in main2)
+
+        # autotls: фейк TLS генерируется из реального ClientHello -
+        # fake-tls-mod есть, а файлового fake-tls нет
+        main_auto = profiles_of("autotls")[4]
+        assert "--dpi-desync=fake,multisplit" in main_auto
+        assert "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com" in main_auto
+        assert not any(
+            a.startswith("--dpi-desync-fake-tls=") for a in main_auto
+        ), "autotls должен брать фейк из реального пакета, а не из .bin"
+
+        # badseq: fooling=badseq + шаг 1000
+        main_bs = profiles_of("badseq")[4]
+        assert "--dpi-desync-fooling=badseq" in main_bs
+        assert "--dpi-desync-badseq-increment=1000" in main_bs
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_www_google_com.bin" in main_bs
+
+        # syndata: SYN-профиль на весь IPv4 TCP, без хостлистов
+        profs = profiles_of("syndata")
+        syn = [p for p in profs if "--filter-l3=ipv4" in p]
+        assert len(syn) == 1
+        assert "--dpi-desync=syndata,multidisorder" in syn[0]
+        assert "--filter-tcp=80,443,2053,2083,2087,2096,8443" in syn[0]
+        assert not any(a.startswith("--hostlist") for a in syn[0])
 
     def test_payloads_shape(self):
         """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
@@ -1792,7 +1861,7 @@ class TestZapret:
         name, _msg = zmod.run_autotest(
             ctl, probe_fn=lambda: next(answers), warmup=0, preferred="combo"
         )
-        first_alt = PRESETS[1]["name"]  # alt11 - первый после combo
+        first_alt = PRESETS[1]["name"]  # alt2 - первый кандидат после combo
         assert name == first_alt
         assert ctl.started == ["combo", first_alt]  # combo не перепробовали
         assert ctl.stops == 1  # гасили только провалившуюся preferred
@@ -1867,14 +1936,23 @@ class TestZapret:
         """youtube - стабильный дискриминатор (без обхода режется всегда,
         discord/gateway мигают): проба начинает с него, чтобы бесполезная
         стратегия отсеивалась быстро. cdn/media обязаны участвовать -
-        без cdn.discordapp.com страница Discord не грузится вовсе."""
+        без cdn.discordapp.com страница Discord не грузится вовсе.
+        2.4.4: добавлены updates.discord.com, i.ytimg.com и
+        redirector.googlevideo.com (инцидент 08-10.11 - DiscordUpdates
+        таймаутил, превью и видео YouTube не грузились)."""
         from vpn_launcher.core.zapret import PROBE_URLS
 
         assert PROBE_URLS[0] == "https://www.youtube.com"
-        assert "https://discord.com/api/gateway" in PROBE_URLS
-        assert "https://cdn.discordapp.com/" in PROBE_URLS
-        assert "https://gateway.discord.gg/api/gateway" in PROBE_URLS
-        assert "https://media.discordapp.net/" in PROBE_URLS
+        for url in (
+            "https://discord.com/api/v9/gateway",
+            "https://cdn.discordapp.com/",
+            "https://gateway.discord.gg/api/gateway",
+            "https://updates.discord.com/",
+            "https://media.discordapp.net/",
+            "https://i.ytimg.com/",
+            "https://redirector.googlevideo.com/",
+        ):
+            assert url in PROBE_URLS, url
 
     def test_controller_lifecycle_safe(self):
         """Пустой контроллер: running=False, stop() не падает (сироты нет)."""

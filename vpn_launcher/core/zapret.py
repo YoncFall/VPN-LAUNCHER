@@ -2,7 +2,7 @@
 """Обход блокировок (zapret/winws): движок, стратегии, автоподбор.
 
 2.2.0 (просьба 02.10): кнопка в лаунчере сама подбирает рабочую стратегию
-обхода DPI. winws запускается с одной из 12 стратегий (zapret_presets),
+обхода DPI. winws запускается с одной из 16 стратегий (zapret_presets),
 проверяются реальные сайты (Discord/YouTube), первая сработавшая
 сохраняется в state['zapretStrategy'] и остаётся работать.
 2.4.2 (жалоба 31.10): клик сохранённой стратегией больше не слепо ей
@@ -47,11 +47,18 @@ LISTS_DIR = ZAPRET_DIR / "lists"
 # cdn/media обязана участвовать: без cdn.discordapp.com не грузится сама
 # страница Discord (диагностика 12.10: под комбо discord.com и шлюз жили,
 # а cdn/media оставались мертвыми - и Discord не работал при «зелёной» пробе).
+# 11.11.2026 (инцидент 08-10.11): добавлены updates.discord.com
+# (DiscordUpdates - таймаутил у всех), i.ytimg.com (превью) и
+# redirector.googlevideo.com (видеопоток) - иначе проба зеленела, пока
+# Discord висел на Starting, а YouTube не играл видео.
 PROBE_URLS = (
     "https://www.youtube.com",
-    "https://discord.com/api/gateway",
+    "https://i.ytimg.com/",
+    "https://redirector.googlevideo.com/",
+    "https://discord.com/api/v9/gateway",
     "https://cdn.discordapp.com/",
     "https://gateway.discord.gg/api/gateway",
+    "https://updates.discord.com/",
     "https://media.discordapp.net/",
 )
 PROBE_TIMEOUT = 6.0
@@ -377,4 +384,11 @@ def run_autotest(
         write_log(f"zapret: '{preset['name']}' did not unblock")
         controller.stop()
     write_log("zapret: no strategy worked")
-    return None, "Ни одна стратегия не помогла - проверь интернет"
+    # 11.11.2026: инцидент Discord 08-10.11 - если не помогла ни одна
+    # стратегия, чаще всего это блокировка по IP/DNS, а не DPI. Врать
+    # «проверь интернет» нельзя: подсказываем VPN и смену DNS.
+    write_log("zapret: hint - IP/DNS block suspected; try VPN or DNS 1.1.1.1")
+    return None, (
+        "Ни одна стратегия не помогла: похоже на блокировку по IP/DNS "
+        "(включите VPN или DNS 1.1.1.1)"
+    )

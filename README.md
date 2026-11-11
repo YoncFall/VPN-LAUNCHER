@@ -3,7 +3,7 @@
 Переписка [VPN LAUNCHER BY @YoncFALL 1.0.6](https://github.com/YoncFall/VPN-LAUNCHER/tree/ps-1.0.6)
 на Python + PySide6. Старая PowerShell-версия сохранена в ветке `ps-1.0.6`
 и продолжает поддерживаться; эта ветка (`main`) — Python-версия, релиз
-**[v2.4.3](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
+**[v2.4.4](https://github.com/YoncFall/VPN-LAUNCHER/releases/latest)**
 (`VPN-LAUNCHER-Setup.exe` — установщик с удалалкой, `VPN-LAUNCHER.zip` — portable).
 
 ## Обход DPI — работает без подписок
@@ -217,9 +217,12 @@ Fake-пакеты (TLS/QUIC/STUN/Discord) генерируются собств�
   стартует мгновенно, но сразу проверяется пробами: при провале
   автоподбор продолжается сам (лампа не врёт зелёным).
 - **ПКМ** — подобрать стратегию заново.
-- Автоподбор прогоняет 12 стратегий (`combo`, `alt11`, `alt13` — реплики
-  рабочих конфигураций zapret-discord(-youtube) 1.10.4 (20.10.2026),
-  профиль-в-профиль, включая их эталонные fake-пакеты; ещё 9 собственных
+- Автоподбор прогоняет 16 стратегий (`combo`, `alt11`, `alt13`, `alt2`,
+  `autotls`, `badseq`, `syndata` — реплики рабочих конфигураций
+  zapret-discord(-youtube) 1.10.4 (20.10.2026), профиль-в-профиль, включая
+  их эталонные fake-пакеты; `alt2`/`autotls`/`badseq`/`syndata` добавлены
+  в 2.4.4 под инцидент Discord 08-10.11.2026: seqovl 652, автогенерация
+  фейка из реального ClientHello, badseq и SYN-данные; ещё 9 собственных
   (`general`, `fake`, `multisplit`, `disorder`, `disorder-fake`,
   `hostfakesplit`, `fakedsplit`, `headsplit`, `repeats` — комбинации
   задокументированных опций winws, каждая проверена штатным
@@ -227,6 +230,11 @@ Fake-пакеты (TLS/QUIC/STUN/Discord) генерируются собств�
   (не TCP-хендшейк — заглушка соединения даёт ложный успех), первая
   сработавшая стратегия сохраняется в `state.json` (`zapretStrategy`) и
   остаётся работать. Если блокировок не видно — берётся базовая `combo`.
+- Пробы 2.4.4: youtube.com, i.ytimg.com (превью), redirector.googlevideo.com
+  (видеопоток), discord.com/api/v9/gateway, gateway.discord.gg,
+  cdn.discordapp.com, updates.discord.com (DiscordUpdates), media.discordapp.net.
+  Если не прошла ни одна стратегия, лаунчер пишет прямо: похоже на блокировку
+  по IP/DNS — включите VPN или DNS 1.1.1.1 (DPI тут бессилен).
 - Чужие экземпляры winws (например, отдельная копия или её служба) не
   гасятся: пока они живы, подбор отказывается работать — двойной
   перехват портил бы пробы. Свой winws останавливается при закрытии окна.
@@ -239,6 +247,12 @@ Fake-пакеты (TLS/QUIC/STUN/Discord) генерируются собств�
   по IP (SYN в таймаут до всех диапазонов, как с 09-10.11.2026), DPI-обход
   бессилен — выручает только VPN: трафик Telegram в конфиге sing-box всегда
   идёт через `proxy-group` (см. «Отклонения»).
+- С 2.4.4 (инцидент 08-10.11.2026: у части провайдеров Discord висел на
+  Starting/RTC, таймаутили DiscordMain/DiscordUpdates/DiscordCDN, не
+  грузились превью и видео YouTube) добавлены 4 стратегии с другими точками
+  вмешательства (`alt2`, `autotls`, `badseq`, `syndata`) и расширены пробы.
+  Если провайдер режет Discord по IP/CDN, ни одна DPI-стратегия не поможет —
+  тогда только VPN; лаунчер так и скажет вместо зелёной лампы.
 
 Отклонение от PS 1.0.6: в PowerShell-версии обхода DPI не было — это
 новая возможность, паритета с 1.0.6 она не нарушает.
@@ -523,5 +537,5 @@ dev-окну. Установщик прогнан вживую: установк
 без остатка (папка/ярлыки/реестр чисты).
 
 **Windows-версия готова к публикации**: артефакты —
-`dist\VPN-LAUNCHER-2.4.3-Setup.exe` (одиночный установщик+удалалка) и
-`dist\VPN-LAUNCHER-2.4.3.zip` (portable с лицензиями).
+`dist\VPN-LAUNCHER-2.4.4-Setup.exe` (одиночный установщик+удалалка) и
+`dist\VPN-LAUNCHER-2.4.4.zip` (portable с лицензиями).

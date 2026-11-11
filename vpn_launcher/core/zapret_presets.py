@@ -28,6 +28,24 @@ v5 (31.10.2026) - ALT11/ALT13 ИЗ ПАКЕТА 1.10.4 (ПОИСК РАБОЧИ�
   убраны: игры у нас идут через VPN/sing-box, им нужен свой winws).
   Фейки .bin скопированы из пакета байт-в-байт (хэши в VERSION.txt).
 
+v6 (11.11.2026) - НОВЫЕ АЛГОРИТМЫ ПОД ИНЦИДЕНТ DISCORD 08-10.11.2026:
+  Массовые таймауты DiscordMain/DiscordUpdates/DiscordCDN и вечное RTC
+  на всех батниках 1.10.3/1.10.4 (issue Flowseal #18742, #18712); часть
+  сетей спасает смена DNS, единичный подтверждённый успех - general
+  (ALT2). Добавлены 4 стратегии, которых у нас не было:
+    alt2    - multisplit + seqovl 652/split-pos 2 (тот самый ALT2);
+    autotls - fake+multisplit seqovl 681 + fooling=ts, а фейк TLS не из
+              .bin, а автогенерация из РЕАЛЬНОГО ClientHello
+              (fake-tls-mod=rnd,dupsid,sni) - обходит DPI, выучивший
+              старые фейковые отпечатки;
+    badseq  - fake+multisplit с fooling=badseq и badseq-increment=1000
+              (ALT4): другой тип порчи фейка, не badsum/ts;
+    syndata - syndata+multidisorder по SYN (ALT5), без хостлистов: ловит
+              весь TCP-80/443/8443 независимо от SNI, когда DPI режет
+              ещё до ClientHello.
+  Пробы расширены под инцидент: updates.discord.com (DiscordUpdates),
+  i.ytimg.com (превью) и redirector.googlevideo.com (видеопоток).
+
 v4 (12.10.2026) - ФИКС ДЕМОК ЭКРАНА (Discord, ошибка 1007):
   Часть демонстраций экрана не грузилась с combo, хотя ALT9 грузил.
   Два расхождения с эталоном найдены и выровнены: (1) fake-файлы были
@@ -541,8 +559,217 @@ def _alt13_chain() -> list[str]:
     ]
 
 
+# --- v6 (11.11.2026): стратегии под инцидент Discord 08-10.11.2026 --------
+# Источник: батники general (ALT2)/(ALT4)/(ALT5)/(FAKE TLS AUTO ALT3)
+# пакета zapret-discord-youtube 1.10.4. Отличие от прежних реплик: у этих
+# стратегий разные точки вмешательства (seqovl 652, автогенерация фейка из
+# реального ClientHello, badseq, SYN-данные), а не очередная перестановка
+# badsum/ts. GameFilter-профили пакета по-прежнему не нужны (игры идут
+# через VPN/sing-box).
+
+# seqovl 652 со сдвигом split-pos=2 (ALT2; подтверждён в issue 10.11)
+def _tls_seqovl652() -> tuple[str, ...]:
+    return (
+        "--dpi-desync=multisplit",
+        "--dpi-desync-split-seqovl=652",
+        "--dpi-desync-split-pos=2",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_GGLE}",
+    )
+
+
+# fake + multisplit, но фейк TLS генерируется из РЕАЛЬНОГО ClientHello
+# (fake-tls-mod без --dpi-desync-fake-tls): так DPI не узнаёт старый
+# фейковый отпечаток из .bin
+def _tls_autotls() -> tuple[str, ...]:
+    return (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=681",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-repeats=8",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_GGLE}",
+        "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+    )
+
+
+# fake + multisplit с fooling=badseq и явным шагом (ALT4): DPI видит фейк
+# с неверным seq и принимает его за реальный сегмент
+def _tls_badseq() -> tuple[str, ...]:
+    return (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-repeats=6",
+        "--dpi-desync-fooling=badseq",
+        "--dpi-desync-badseq-increment=1000",
+        f"--dpi-desync-fake-tls={_FAKE_GGLE}",
+    )
+
+
+# SYN-данные + переупорядочивание: вмешательство до TLS-хендшейка, поэтому
+# не зависит от SNI/хостлистов (ALT5)
+_SYNDATA_TECH = ("--dpi-desync=syndata,multidisorder",)
+
+
+def _suite(
+    name: str,
+    *,
+    quic: tuple[str, ...],
+    voice: tuple[str, ...],
+    media: tuple[str, ...],
+    google: tuple[str, ...],
+    main: tuple[str, ...],
+    google_ipid: bool = True,
+) -> list[str]:
+    """Семь самодостаточных профилей как у combo/alt11/alt13.
+
+    Нужен, чтобы новые стратегии повторяли структуру исходных батников
+    1.10.4 (QUIC, голос, медиа-альт-порты, google-группа, основной список,
+    два ipset-профиля), а не только TLS-профиль.
+    """
+    return [
+        f"--comment=vpl-{name}",
+        *_WF,
+        # 1. QUIC 443
+        "--filter-udp=443",
+        "--filter-l7=quic",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *quic,
+        # 2. Discord-голос / STUN
+        "--new",
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun",
+        *voice,
+        # 3. discord.media на альт-портах
+        "--new",
+        "--filter-tcp=2053,2083,2087,2096,8443",
+        "--hostlist-domains=discord.media",
+        *_EXCLUDE,
+        *media,
+        # 4. Google/YouTube группа
+        "--new",
+        "--filter-tcp=443",
+        "--hostlist={LISTS}list-google.txt",
+        *(["--ip-id=zero"] if google_ipid else []),
+        *google,
+        # 5. Основной список (дискорд и прочее) 80+443
+        "--new",
+        "--filter-tcp=80,443",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *main,
+        # 6. ipset: QUIC по IP
+        "--new",
+        "--filter-udp=443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *quic,
+        # 7. ipset: TCP 80/443/8443 по IP
+        "--new",
+        "--filter-tcp=80,443,8443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *main,
+    ]
+
+
+def _alt2_chain() -> list[str]:
+    """alt2 = реплика «general (ALT2)» 1.10.4: seqovl 652 / split-pos 2.
+
+    Единственная стратегия, которую 10.11.2026 подтвердил живой
+    пользователь (вместе с ipset и GameFilter). Без фейков вообще -
+    только наложение последовательностей."""
+    return _suite(
+        "alt2",
+        quic=_QUIC_TECH_COMBO,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_seqovl652(),
+        google=_tls_seqovl652(),
+        main=_tls_seqovl652(),
+    )
+
+
+def _autotls_chain() -> list[str]:
+    """autotls = реплика «general (FAKE TLS AUTO ALT3)» 1.10.4.
+
+    Отличие от alt11: фейк TLS не подставляется из файла, а собирается
+    winws из реального ClientHello (rnd,dupsid,sni=www.google.com)."""
+    main = _tls_autotls() + (f"--dpi-desync-fake-http={_FAKE_SFERUM}",)
+    return _suite(
+        "autotls",
+        quic=_QUIC_TECH_ALT,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_autotls(),
+        google=_tls_autotls(),
+        main=main,
+    )
+
+
+def _badseq_chain() -> list[str]:
+    """badseq = реплика «general (ALT4)» 1.10.4.
+
+    fooling=badseq с шагом 1000 вместо badsum/ts: фейк уходит с заведомо
+    неверным seq, и DPI склеивает поток неверно."""
+    main = _tls_badseq() + (
+        f"--dpi-desync-fake-tls={_FAKE_STUN2}",
+        f"--dpi-desync-fake-http={_FAKE_SFERUM}",
+    )
+    return _suite(
+        "badseq",
+        quic=_QUIC_TECH_COMBO,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_badseq(),
+        google=_tls_badseq(),
+        main=main,
+    )
+
+
+def _syndata_chain() -> list[str]:
+    """syndata = реплика «general (ALT5)» 1.10.4 (без GameFilter-профиля).
+
+    syndata,multidisorder по SYN на весь TCP 80/443/8443 и IPv4: работает
+    даже там, где DPI блокирует до отправки ClientHello и хостлисты
+    бесполезны. ipset-профиль идёт раньше общего, чтобы не дублировать
+    обработку адресов из ipset-all.txt."""
+    return [
+        "--comment=vpl-syndata",
+        *_WF,
+        # 1. QUIC 443
+        "--filter-udp=443",
+        "--filter-l7=quic",
+        *_HOSTS,
+        *_IPSET_EXCL,
+        *_QUIC_TECH_COMBO,
+        # 2. Discord-голос / STUN
+        "--new",
+        "--filter-udp=19294-19344,50000-50100",
+        "--filter-l7=discord,stun",
+        *_VOICE_TECH_COMBO,
+        # 3. ipset: TCP по IP
+        "--new",
+        "--filter-tcp=80,443,8443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_SYNDATA_TECH,
+        # 4. ВЕСЬ IPv4 TCP 80/443 (+альт-порты): без хостлистов
+        "--new",
+        "--filter-l3=ipv4",
+        "--filter-tcp=80,443,2053,2083,2087,2096,8443",
+        *_IPSET_EXCL,
+        *_SYNDATA_TECH,
+        # 5. ipset: QUIC по IP
+        "--new",
+        "--filter-udp=443",
+        "--ipset={LISTS}ipset-all.txt",
+        *_EXCL_IPSET,
+        *_QUIC_TECH_COMBO,
+    ]
+
+
 PRESETS: list[dict] = [
     {"name": "combo",         "args": _combo_chain()},
+    {"name": "alt2",          "args": _alt2_chain()},
+    {"name": "autotls",       "args": _autotls_chain()},
+    {"name": "badseq",        "args": _badseq_chain()},
     {"name": "alt11",         "args": _alt11_chain()},
     {"name": "alt13",         "args": _alt13_chain()},
     {"name": "general",       "args": _chain("general", _tls_seqovl())},
@@ -554,4 +781,7 @@ PRESETS: list[dict] = [
     {"name": "fakedsplit",    "args": _chain("fakedsplit", _tls_fakedsplit())},
     {"name": "headsplit",     "args": _chain("headsplit", _tls_headsplit())},
     {"name": "repeats",       "args": _chain("repeats", _tls_repeats())},
+    # v6: самый инвазивный (SYN-данные на весь IPv4 TCP) - последним,
+    # чтобы обычные сайты не ломались, пока подбираются мягкие стратегии
+    {"name": "syndata",       "args": _syndata_chain()},
 ]
