@@ -262,7 +262,9 @@ def test_resolve_endpoint_https_only(monkeypatch):
 
     monkeypatch.setattr(de.urllib.request, "urlopen", fake_urlopen)
     de._cache.clear()
-    assert de.resolve_endpoint() == ""  # http-адрес отклонён
+    result = de.resolve_endpoint()
+    assert result != "http://insecure/x"  # http-адрес отклонён
+    assert result == de.DEFAULT_DIAG_ENDPOINT  # фолбэк на резервный DEFAULT
 
 
 def test_resolve_endpoint_accepts_https(monkeypatch):

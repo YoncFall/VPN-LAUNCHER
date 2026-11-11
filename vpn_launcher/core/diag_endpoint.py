@@ -18,7 +18,7 @@ from vpn_launcher.core.update import APPS_JSON_URL, SLUG, pick_app
 
 # Заполняется при настройке приёмника. Пусто -> отправка выключена,
 # отчёт всё равно сохраняется локально и открывается кнопкой.
-DEFAULT_DIAG_ENDPOINT = ""
+DEFAULT_DIAG_ENDPOINT = "https://yonca.tailca104c.ts.net/report"
 
 _CACHE_TTL = 600.0
 _cache: dict[str, object] = {"at": 0.0, "url": ""}
