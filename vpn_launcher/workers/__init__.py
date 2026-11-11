@@ -146,7 +146,6 @@ class UpdateCheckWorker(QThread):
 
 class UpdateDownloadWorker(QThread):
     """Скачивание Setup.exe обновления; progress(0-100) | done(путь) | failed(текст)."""
-
     progress = Signal(int)
     done = Signal(str)
     failed = Signal(str)
@@ -166,3 +165,42 @@ class UpdateDownloadWorker(QThread):
             self.done.emit(str(self._dest))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class DiagnosticsWorker(QThread):
+    """Сбор обезличенного отчёта и отправка владельцу (2.4.6).
+
+    Сеть опрашивается по одному эндпоинту с таймаутами (десятки секунд) -
+    в GUI-потоке это заморозило бы окно. Результат - словарь
+    run_diagnostics(): {'data','text','txt','json','sent','message'} или
+    {'error': текст}. consent/endpoint решает вызывающий, воркер ничего не
+    отправляет сам по себе.
+    """
+
+    progress = Signal(str)
+    done = Signal(object)
+
+    def __init__(self, context: dict, *, send: bool, endpoint: str | None) -> None:
+        super().__init__()
+        self._context = dict(context)
+        self._send = bool(send)
+        self._endpoint = endpoint
+
+    def run(self) -> None:
+        try:
+            from vpn_launcher.core.diag_endpoint import resolve_endpoint
+            from vpn_launcher.core.diagnostics import run_diagnostics
+
+            endpoint = self._endpoint
+            if endpoint is None:
+                endpoint = resolve_endpoint()  # сеть - здесь, не в GUI-потоке
+            result = run_diagnostics(
+                self._context,
+                send=self._send and bool(endpoint),
+                endpoint=endpoint or "",
+                progress=lambda t: self.progress.emit(t),
+            )
+            result["endpoint"] = endpoint or ""
+            self.done.emit(result)
+        except Exception as exc:  # noqa: BLE001 - отчёт не должен ронять UI
+            self.done.emit({"error": f"{type(exc).__name__}: {exc}"})

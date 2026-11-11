@@ -101,6 +101,7 @@ from vpn_launcher.win.proxy import (
 )
 from vpn_launcher.win.wfp import install_kill_switch, remove_kill_switch
 from vpn_launcher.workers import (
+    DiagnosticsWorker,
     EgressWorker,
     PingWorker,
     SubscriptionWorker,
@@ -211,6 +212,9 @@ class MainWindow(QWidget):
         # 2.2.0: обход блокировок (zapret/winws) - свой контроллер процесса
         self._zapret = ZapretController()
         self._zapret_worker: ZapretWorker | None = None
+        # 2.4.6: диагностика Discord (сеть/DPI/клиент) - тяжёлые пробы в фоне
+        self._diag_worker: DiagnosticsWorker | None = None
+        self._diag_last_auto = 0.0
         # видимое окно (WebWindow при HTML-интерфейсе; None при --qt-ui и в
         # тестах). Перезапуск с правами берёт позицию у него - см.
         # _visible_window
@@ -630,7 +634,93 @@ class MainWindow(QWidget):
             save_state(self.state)
         else:
             self._status(msg, theme.DANGER)  # «ничего не подошло» - ошибка
+            # 2.4.6: полный провал подбора - самый частый случай «у друга не
+            # работает». Собираем отчёт автоматически (обезличенный,
+            # зашифрованный) - иначе владелец сборки никогда не увидит
+            # причину: пользователь лог не пришлёт.
+            self._run_diagnostics(auto=True)
         self._zapret_sync()  # лампа/ракета сразу отражают итог подбора
+
+    # ---- диагностика Discord (2.4.6) -------------------------------------
+    def _diag_context(self) -> dict:
+        """То, что знает окно: режимы, движки, стратегия."""
+        return {
+            "mode": self._mode(),
+            "appMode": self._app_mode(),
+            "dpiStrategy": str(self.state.get("zapretStrategy") or ""),
+            "dpiRunning": self._zapret.running(),
+            "vpnRunning": self.proc is not None and self.proc.poll() is None,
+            "elevated": is_elevated(),
+        }
+
+    def _diag_busy(self) -> bool:
+        return self._diag_worker is not None and self._diag_worker.isRunning()
+
+    def _run_diagnostics(self, *, auto: bool = False) -> None:
+        """Собрать отчёт в фоне; manual - по кнопке, auto - после провала DPI.
+
+        Отправка: по кнопке - всегда (явное действие пользователя), автомати-
+        чески - только если не отключена в state.json (diagAutoSend, по
+        умолчанию включена). Адрес приёмника воркер резолвит сам, чтобы не
+        морозить окно сетевым запросом.
+        """
+        if self._diag_busy():
+            if not auto:
+                self._status("Диагностика уже идёт - дождитесь отчёта", theme.WARN)
+            return
+        if auto:
+            now = time.monotonic()
+            if now - self._diag_last_auto < 1800:  # не чаще раза в 30 минут
+                return
+            self._diag_last_auto = now
+
+        allow = not auto or bool(self.state.get("diagAutoSend", True))
+        self._status(
+            "Диагностика: проверяю DNS/TCP/TLS Discord (до минуты)...", theme.WARN
+        )
+        worker = DiagnosticsWorker(self._diag_context(), send=allow, endpoint=None)
+        worker.progress.connect(lambda t: self._status("Диагностика: " + t, theme.WARN))
+        worker.done.connect(lambda r: self._diag_done(r, auto=auto))
+        self._diag_worker = worker
+        worker.start()
+
+    def _diag_done(self, result: dict, *, auto: bool = False) -> None:
+        if not isinstance(result, dict) or result.get("error"):
+            msg = str((result or {}).get("error") or "неизвестная ошибка")
+            write_log(f"diagnostics: ERROR {msg}")
+            self._status(f"Диагностика не удалась: {msg}", theme.DANGER)
+            if not auto:
+                self._msg(f"Не удалось собрать отчёт:\n{msg}", "Диагностика")
+            return
+
+        verdict = (result.get("data") or {}).get("verdict") or {}
+        title = str(verdict.get("title") or "отчёт готов")
+        actions = [str(a) for a in (verdict.get("actions") or [])]
+        sent = bool(result.get("sent"))
+        message = str(result.get("message") or "")
+        path = str(result.get("txt") or "")
+
+        if sent:
+            tail = "Отчёт отправлен разработчику (обезличенный, зашифрованный)."
+            self._status("Диагностика: отчёт отправлен", theme.ACCENT2)
+        elif not result.get("endpoint"):
+            tail = "Адрес приёма не настроен: отчёт сохранён локально."
+            self._status("Диагностика: отчёт сохранён локально", theme.WARN)
+        else:
+            tail = f"Отправка не удалась ({message}). Отчёт сохранён локально."
+            self._status("Диагностика: отчёт сохранён локально", theme.WARN)
+
+        write_log(
+            f"diagnostics: verdict={verdict.get('code')} sent={sent} "
+            f"endpoint={'yes' if result.get('endpoint') else 'no'} file={path}"
+        )
+        if auto:
+            return  # при автопровале не лезем модалкой поверх ошибки подбора
+
+        lines = [title, ""]
+        lines += [f"{i}. {a}" for i, a in enumerate(actions, 1)]
+        lines += ["", tail, f"Файл: {path}"]
+        self._msg("\n".join(lines), "Диагностика Discord")
 
     def _zapret_autostart(self) -> None:
         """--autozapret: продолжение после повышения прав (как autoconnect)."""

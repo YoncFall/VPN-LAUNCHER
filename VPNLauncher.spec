@@ -33,6 +33,11 @@ for _pkg in (
     binaries += _b
     hiddenimports += _h
 
+# 2.4.6: диагностика шифрует отчёт cryptography (X25519+AES-GCM). Импорт
+# ленивый (внутри функций diagnostics.py) - PyInstaller его видит по байткоду,
+# но явный hiddenimport гарантирует, что хук подтянет cffi/OpenSSL-бинарники.
+hiddenimports += ["cryptography"]
+
 _WEB_ASSETS = ROOT / "vpn_launcher" / "ui" / "web" / "assets"
 datas.append((str(_WEB_ASSETS), "assets"))
 _qwc = Path(PySide6.__file__).resolve().parent / "QtWebChannel" / "qwebchannel.js"

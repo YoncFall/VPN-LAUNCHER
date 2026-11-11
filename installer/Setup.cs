@@ -1,4 +1,4 @@
-﻿// Setup.cs - установщик VPN ЛАУНЧЕР (Python edition).
+// Setup.cs - установщик VPN ЛАУНЧЕР (Python edition).
 // Один файл setup.exe: внутри встроен zip с файлами программы
 // (PyInstaller onedir: VPNLauncher.exe + _internal + sing-box.exe).
 // Установка идёт в профиль пользователя, права администратора не нужны.
@@ -38,7 +38,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "2.4.5";
+    const string Version = "2.4.6";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
