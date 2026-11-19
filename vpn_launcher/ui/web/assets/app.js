@@ -92,6 +92,9 @@
       if (info.phase === "downloading") {
         text.textContent = "Скачивание обновления " + (info.progress || 0) + "%...";
         now.disabled = true;
+      } else if (info.phase === "installing") {
+        text.textContent = "Устанавливается обновление. Программа откроется сама...";
+        now.disabled = true;
       } else if (info.phase === "error") {
         text.textContent = "Ошибка загрузки обновления: " + (info.error || "");
         now.disabled = false;

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -157,56 +158,212 @@ def setup_dest(version: str) -> Path:
     return Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-Setup-{version}.exe"
 
 
-def helper_script(setup_path: Path, app_path: Path) -> str:
+def helper_script(
+    setup_path: Path,
+    app_path: Path,
+    target_version: str = "",
+) -> str:
     """PowerShell-скрипт: дождаться нашего выхода, тихо установить, запустить.
 
-    /S - тихий режим установщика (без окон и UAC: программа уже закрыта,
-    установка идёт в профиль пользователя). После установки приложение
-    запускается само (в тихом режиме Setup.cs этого не делает); при ошибке
-    установки (код != 0) открывается лог установщика - иначе тихий режим
-    скрыл бы причину полностью.
+    /S - тихий режим установщика. После установки приложение запускается
+    само (в тихом режиме Setup.cs этого не делает).
 
-    ASCII-тело, пути - параметры (Unicode на командной строке PowerShell не
-    ломается, в отличие от кодировки самого .ps1).
+    2.4.8: helper работает без единого окна. Он ждёт смены версии (в том
+    числе когда установщик перезапустился с правами и вернул код 4), при
+    неудаче пишет короткий файл с причиной и всё равно запускает программу.
+    Ни блокнота, ни MessageBox: пользователь видит только, что программа
+    закрылась и снова открылась.
+
+    Скрипт пишется в UTF-8 с BOM: Windows PowerShell 5.1 иначе читает
+    русский текст как мусор.
     """
     return (
-        "param([int]$WaitPid, [string]$Setup, [string]$App)\n"
+        "param([int]$WaitPid, [string]$Setup, [string]$App, [string]$TargetVer,"
+        " [string]$Lock)\n"
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         "try { Wait-Process -Id $WaitPid -Timeout 300 -ErrorAction Stop } catch {}\n"
+        "function Get-Ver([string]$p) {\n"
+        "  try { return [string](Get-Item -LiteralPath $p).VersionInfo.FileVersion }"
+        " catch { return '' }\n"
+        "}\n"
         "$p = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru\n"
         "try { $null = $p.WaitForExit(600000) } catch {}\n"
-        "if ($p.ExitCode -eq 0) { Start-Process -FilePath $App }\n"
-        "else { notepad.exe (Join-Path $env:TEMP 'vpnlauncher_setup.log') }\n"
+        "$code = ''\n"
+        "try { $code = [string]$p.ExitCode } catch {}\n"
+        "# Код 4: установщик перезапустился с правами и работает отдельным\n"
+        "# процессом. Ждём, пока он закончит и версия файла сменится; иначе\n"
+        "# человек остался бы без программы на все 4 минуты.\n"
+        "$procName = [IO.Path]::GetFileNameWithoutExtension($Setup)\n"
+        "$deadline = (Get-Date).AddMinutes(4)\n"
+        "$ok = $false\n"
+        "if ($TargetVer) {\n"
+        "  while ((Get-Date) -lt $deadline) {\n"
+        "    if ((Get-Ver $App) -like ($TargetVer + '*')) { $ok = $true; break }\n"
+        "    $busy = @(Get-Process -Name $procName"
+        " -ErrorAction SilentlyContinue).Count -gt 0\n"
+        "    if (-not $busy) {\n"
+        "      # установщик больше не работает: даём Windows пару секунд\n"
+        "      Start-Sleep -Seconds 2\n"
+        "      if ((Get-Ver $App) -like ($TargetVer + '*')) { $ok = $true }\n"
+        "      break\n"
+        "    }\n"
+        "    Start-Sleep -Milliseconds 400\n"
+        "  }\n"
+        "}\n"
+        "$now = Get-Ver $App\n"
+        "if ($TargetVer -and -not $ok) {\n"
+        "  $log = Join-Path $env:TEMP 'vpnlauncher_setup.log'\n"
+        "  $err = Join-Path $env:TEMP 'vpnlauncher_update_error.txt'\n"
+        "  $tail = ''\n"
+        "  try { $tail = ((Get-Content -LiteralPath $log -Tail 12 -Encoding UTF8)"
+        " -join [Environment]::NewLine) } catch {}\n"
+        "  $text = 'Обновление не установилось.' + [Environment]::NewLine +"
+        " 'Установлена версия: ' + $now + [Environment]::NewLine +"
+        " 'Нужна версия: ' + $TargetVer + [Environment]::NewLine +"
+        " 'Код установщика: ' + $code + [Environment]::NewLine +"
+        " 'Журнал: ' + $log + [Environment]::NewLine +"
+        " [Environment]::NewLine + $tail\n"
+        "  try { [IO.File]::WriteAllText($err, $text,"
+        " (New-Object Text.UTF8Encoding($false))) } catch {}\n"
+        "}\n"
+        "try { if ($Lock) { Remove-Item -LiteralPath $Lock -Force } } catch {}\n"
+        "Start-Process -FilePath $App\n"
     )
 
 
-def write_helper(dest: Path, setup_path: Path, app_path: Path) -> Path:
+def write_helper(
+    dest: Path,
+    setup_path: Path,
+    app_path: Path,
+    target_version: str = "",
+) -> Path:
     """Записать helper-скрипт рядом со Setup.exe и вернуть его путь."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(helper_script(setup_path, app_path), encoding="ascii")
+    dest.write_text(
+        helper_script(setup_path, app_path, target_version),
+        encoding="utf-8-sig",
+    )
     return dest
 
 
-def launch_helper(script: Path, setup_path: Path, app_path: Path) -> None:
-    """Запустить helper отвязанно (скрытое окно, переживает наш выход)."""
+def launch_helper(
+    script: Path,
+    setup_path: Path,
+    app_path: Path,
+    target_version: str = "",
+    lock_path: Path | None = None,
+) -> None:
+    """Запустить helper отвязанно, без единого видимого окна.
+
+    CREATE_NO_WINDOW обязателен: -WindowStyle Hidden у powershell.exe всё
+    равно мелькает консолью, и пользователь может закрыть её вместе с
+    обновлением (инцидент 19.11.2026).
+    """
     import subprocess
 
-    subprocess.Popen(  # noqa: S603 - фиксированные аргументы
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-WaitPid",
-            str(os.getpid()),
-            "-Setup",
-            str(setup_path),
-            "-App",
-            str(app_path),
-        ],
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,  # noqa: S603
-    )
+    args = [
+        "powershell.exe",
+        "-NoProfile",
+        "-WindowStyle",
+        "Hidden",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+        "-WaitPid",
+        str(os.getpid()),
+        "-Setup",
+        str(setup_path),
+        "-App",
+        str(app_path),
+        "-TargetVer",
+        str(target_version),
+    ]
+    if lock_path is not None:
+        args += ["-Lock", str(lock_path)]
+    kwargs: dict[str, object] = {
+        "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
+    }
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0  # SW_HIDE
+        kwargs["startupinfo"] = startupinfo
+        kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000  # CREATE_NO_WINDOW
+        )
+    subprocess.Popen(args, **kwargs)  # noqa: S603 - фиксированные аргументы
+
+
+# ---- блокировка на время обновления (2.4.8) --------------------------------
+# Пока установщик копирует файлы, ручной запуск старой копии ломает установку
+# (файл занят). lock-файл в папке программы заставляет новый запуск подождать.
+
+UPDATE_LOCK_MAX_AGE = 600.0  # старше 10 минут - считается протухшим
+UPDATE_ERROR_FILE = "vpnlauncher_update_error.txt"
+
+
+def update_lock_path() -> Path:
+    from vpn_launcher.paths import install_root
+
+    return install_root() / "update.lock"
+
+
+def write_update_lock(version: str) -> Path:
+    """Отметить, что идёт установка версии version."""
+    path = update_lock_path()
+    payload = {
+        "version": str(version),
+        "pid": os.getpid(),
+        "ts": time.time(),
+    }
+    try:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        pass
+    return path
+
+
+def read_update_lock() -> dict | None:
+    """Активная блокировка обновления или None (нет/протухла/битая)."""
+    try:
+        raw = update_lock_path().read_text(encoding="utf-8")
+        info = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    try:
+        age = time.time() - float(info.get("ts") or 0)
+    except (TypeError, ValueError):
+        return None
+    if age < 0 or age > UPDATE_LOCK_MAX_AGE:
+        return None
+    return info
+
+
+def clear_update_lock() -> None:
+    try:
+        update_lock_path().unlink()
+    except OSError:
+        pass
+
+
+def update_error_path() -> Path:
+    import tempfile
+
+    return Path(tempfile.gettempdir()) / UPDATE_ERROR_FILE
+
+
+def take_update_error() -> str:
+    """Забрать короткий текст ошибки обновления (и удалить файл)."""
+    path = update_error_path()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return text.strip()

@@ -44,6 +44,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QWidget
 
+from vpn_launcher import __version__
 from vpn_launcher.core.config import (
     APP_MODE_EXCLUDE,
     APP_MODE_INCLUDE,
@@ -1603,8 +1604,68 @@ def _window_pos_arg(args: list[str]) -> tuple[int, int] | None:
     return None
 
 
+def _wait_update_lock(timeout: float = 120.0) -> None:
+    """Дождаться конца установки, если она уже идёт.
+
+    Пока установщик копирует файлы, ручной запуск старой копии держит exe и
+    ломает обновление (инцидент 19.11.2026). Lock-файл пишется перед выходом
+    на установку и снимается helper-скриптом.
+    """
+    from vpn_launcher.core.update import clear_update_lock, read_update_lock
+
+    lock = read_update_lock()
+    if lock is None:
+        clear_update_lock()  # протухший или битый файл не мешает запуску
+        return
+    if str(lock.get("version") or "") == __version__:
+        clear_update_lock()  # новая версия уже на диске
+        return
+    write_log(f"update: идёт установка {lock.get('version')}, ждём")
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if read_update_lock() is None:
+            write_log("update: установка закончилась, продолжаю запуск")
+            return
+        time.sleep(0.25)
+    write_log("update: lock не снят за 120 с, снимаю и запускаюсь")
+    clear_update_lock()
+
+
+def _announce_update_error(win: MainWindow) -> None:
+    """Сообщить, что прошлое обновление не встало (коротко, один раз).
+
+    Helper-скрипт при ошибке не показывает ничего сам, только пишет файл:
+    пользователь не должен видеть консоль/блокнот. Причину показываем уже
+    в обычном окне программы после запуска.
+    """
+    from vpn_launcher.core.update import take_update_error
+
+    text = take_update_error()
+    if not text:
+        return
+    write_log("update: " + " | ".join(text.splitlines())[:2000])
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    short = "\n".join(lines[:8])
+    if len(short) > 900:
+        short = short[:900] + "..."
+
+    def show() -> None:
+        win._status(
+            "Обновление не установилось. Подробности в журнале программы.",
+            theme.DANGER,
+        )
+        win._msg(
+            short + "\n\nМожно скачать установщик с сайта и запустить вручную.",
+            "Обновление не установилось",
+            icon="error",
+        )
+
+    QTimer.singleShot(1500, show)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
+    _wait_update_lock()
     autoconnect = "--autoconnect" in args
     autozapret = "--autozapret" in args  # 2.2.0: авто-после UAC (zapret)
     # живой чужой экземпляр (в т.ч. повышенный - у него свой мьютекс):
@@ -1631,6 +1692,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setOrganizationName("yoncfall-tech")
 
     win = MainWindow()
+    _announce_update_error(win)
     # 13.10.2026: интерфейс - HTML-макет GPT (QtWebEngine), логика остаётся
     # в скрытом MainWindow. Откат на прежний Qt-вид: ключ --qt-ui.
     web_view = None

@@ -114,12 +114,68 @@ def test_fetch_latest_offline_is_none(monkeypatch):  # noqa: ANN001
 
 
 def test_helper_script_waits_for_pid_then_installs_silently(tmp_path):  # noqa: ANN001
-    script = upd.helper_script(tmp_path / "Setup.exe", tmp_path / "VPNLauncher.exe")
+    script = upd.helper_script(
+        tmp_path / "Setup.exe", tmp_path / "VPNLauncher.exe", "2.4.8"
+    )
     assert "Wait-Process" in script
     # тихий режим: без окон установщика; сам запуск приложения после установки
     assert "'/S'" in script
     assert "Start-Process -FilePath $App" in script
     assert "vpnlauncher_setup.log" in script  # ошибка установки не остаётся незамеченной
+    # 2.4.8: никаких блокнотов и окон с текстом скрипта
+    assert "notepad" not in script
+    assert "MessageBox" not in script
+    assert "vpnlauncher_update_error.txt" in script
+    assert "Remove-Item -LiteralPath $Lock" in script
+    # ждём смены версии, а не только код возврата установщика
+    assert "$TargetVer" in script
+
+
+def test_write_helper_is_utf8_with_bom(tmp_path):  # noqa: ANN001
+    dest = tmp_path / "helper.ps1"
+    upd.write_helper(dest, tmp_path / "Setup.exe", tmp_path / "App.exe", "2.4.8")
+    raw = dest.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    assert "Обновление не установилось" in raw.decode("utf-8-sig")
+
+
+# ---- lock на время обновления (2.4.8) --------------------------------------
+def test_update_lock_roundtrip(tmp_path, monkeypatch):  # noqa: ANN001
+    monkeypatch.setattr(upd, "update_lock_path", lambda: tmp_path / "update.lock")
+
+    assert upd.read_update_lock() is None
+    upd.write_update_lock("2.4.8")
+    info = upd.read_update_lock()
+    assert info is not None and info["version"] == "2.4.8"
+
+    upd.clear_update_lock()
+    assert upd.read_update_lock() is None
+
+
+def test_stale_update_lock_is_ignored(tmp_path, monkeypatch):  # noqa: ANN001
+    monkeypatch.setattr(upd, "update_lock_path", lambda: tmp_path / "update.lock")
+    (tmp_path / "update.lock").write_text(
+        '{"version": "2.4.8", "pid": 1, "ts": 0}', encoding="utf-8"
+    )
+    assert upd.read_update_lock() is None
+
+
+def test_broken_update_lock_is_ignored(tmp_path, monkeypatch):  # noqa: ANN001
+    monkeypatch.setattr(upd, "update_lock_path", lambda: tmp_path / "update.lock")
+    (tmp_path / "update.lock").write_text("{oops", encoding="utf-8")
+    assert upd.read_update_lock() is None
+
+
+def test_take_update_error_reads_and_removes(tmp_path, monkeypatch):  # noqa: ANN001
+    path = tmp_path / "err.txt"
+    path.write_text("Обновление не установилось.\nКод: 2", encoding="utf-8")
+    monkeypatch.setattr(upd, "update_error_path", lambda: path)
+
+    text = upd.take_update_error()
+
+    assert text.startswith("Обновление не установилось")
+    assert not path.exists()
+    assert upd.take_update_error() == ""
 
 
 # ---- мост (плашка в snapshot, слоты) --------------------------------------

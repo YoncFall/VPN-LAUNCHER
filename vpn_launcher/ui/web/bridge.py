@@ -22,12 +22,15 @@ from typing import Any
 from PySide6.QtCore import QEventLoop, QObject, QTimer, Slot
 
 from vpn_launcher import __version__
+from vpn_launcher.core.log import write_log
 from vpn_launcher.core.update import (
     UpdateInfo,
     is_installed_copy,
     launch_helper,
     setup_dest,
+    update_lock_path,
     write_helper,
+    write_update_lock,
 )
 from vpn_launcher.ui import theme
 
@@ -158,17 +161,29 @@ class Bridge(QObject):
             self._update["progress"] = pct
 
     def _on_update_done(self, path: str) -> None:
-        """Setup.exe скачан: поднять helper (ждёт нашего выхода) и закрыться.
+        """Setup.exe скачан: тихо установить и перезапуститься.
 
-        Helper ставит тихо (/S) и сам запускает приложение - пользователю
-        не нужно кликать по установщику (просьба 16.10).
+        Helper ставит тихо (/S) и сам запускает приложение. Пока идёт
+        установка, окно показывает «Устанавливается обновление», а lock-файл
+        не даёт открыть старую копию и сломать копирование (2.4.8).
         """
+        info = self._update or {}
+        version = str(info.get("version") or "")
         setup = Path(path)
         app = Path(sys.executable)  # frozen: наш exe в папке установки
+        lock = update_lock_path()
+        write_update_lock(version)
         helper = Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-update-{os.getpid()}.ps1"
-        write_helper(helper, setup, app)
-        launch_helper(helper, setup, app)
-        # сначала чистит (отключение, kill switch), потом закрывается
+        write_helper(helper, setup, app, version)
+        launch_helper(helper, setup, app, version, lock)
+        write_log(f"update: helper started, target {version or '?'}")
+        if self._update is not None:
+            self._update["phase"] = "installing"
+            self._update["progress"] = 100
+        # даём странице показать «Устанавливается обновление», затем выходим
+        QTimer.singleShot(700, self._close_for_update)
+
+    def _close_for_update(self) -> None:
         if self.host is not None:
             self.host.close_app()
         else:
