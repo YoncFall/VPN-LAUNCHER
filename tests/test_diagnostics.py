@@ -45,6 +45,33 @@ def test_redact_obj_walks_nested():
     assert "<uuid>" in out["c"]["d"]
 
 
+def test_redact_arg_keeps_technical_tokens():
+    """2.4.7: в аргументах winws имена .bin и hex нужны для воспроизведения."""
+    s = d.redact_arg(
+        r"--dpi-desync-fake-tls=C:\Tools\zapret\bin\tls_clienthello_www_google_com.bin "
+        "--dpi-desync-fakedsplit-mod=0x1603010001aabbccddeeff001122334455 "
+        r"user C:\Users\oksana\sub vless://abc@1.2.3.4:443?token=SECRET"
+    )
+    assert "tls_clienthello_www_google_com.bin" in s
+    assert "0x1603010001aabbccddeeff001122334455" in s
+    assert "oksana" not in s
+    assert "<subscription-link>" in s
+
+
+def test_redact_obj_keeps_winws_args():
+    obj = {
+        "zapret": {
+            "args": [
+                r"--dpi-desync-fake-tls=C:\z\bin\tls_clienthello_www_google_com.bin",
+                "--dpi-desync=fake,split2",
+            ]
+        }
+    }
+    out = d._redact_obj(obj)
+    assert "tls_clienthello_www_google_com.bin" in out["zapret"]["args"][0]
+    assert out["zapret"]["args"][1] == "--dpi-desync=fake,split2"
+
+
 # ---- шифрование ------------------------------------------------------------
 def test_encrypt_decrypt_roundtrip():
     body = "секретный отчёт".encode("utf-8")
@@ -291,3 +318,81 @@ def test_resolve_endpoint_accepts_https(monkeypatch):
     monkeypatch.setattr(de.urllib.request, "urlopen", fake_urlopen)
     de._cache.clear()
     assert de.resolve_endpoint() == "https://m.ts.net/report"
+
+
+# ---- сторож (2.4.7) --------------------------------------------------------
+def test_discord_reachable_ok_without_retry(monkeypatch):
+    calls = []
+
+    def fake_probe(url, timeout=0):
+        calls.append(url)
+        return {"url": url, "status": 200, "ms": 10, "error": ""}
+
+    monkeypatch.setattr(d, "http_probe", fake_probe)
+    out = d.discord_reachable(retry_delay=0)
+    assert out["ok"] is True
+    assert len(calls) == len(d.WATCHDOG_URLS)
+
+
+def test_discord_reachable_retries_once_then_fails(monkeypatch):
+    calls = []
+
+    def fake_probe(url, timeout=0):
+        calls.append(url)
+        return {"url": url, "status": None, "ms": 5000, "error": "timeout"}
+
+    monkeypatch.setattr(d, "http_probe", fake_probe)
+    out = d.discord_reachable(retry_delay=0)
+    assert out["ok"] is False
+    assert len(calls) == len(d.WATCHDOG_URLS) * 2  # каждый адрес повторён
+
+
+def test_discord_reachable_survives_one_dead_host(monkeypatch):
+    def fake_probe(url, timeout=0):
+        ok = "gateway.discord.gg" in url
+        return {
+            "url": url,
+            "status": 200 if ok else None,
+            "ms": 10,
+            "error": "" if ok else "timeout",
+        }
+
+    monkeypatch.setattr(d, "http_probe", fake_probe)
+    out = d.discord_reachable(retry_delay=0)
+    assert out["ok"] is True
+
+
+def test_internet_available_false_when_all_endpoints_dead(monkeypatch):
+    import socket as real_socket
+
+    def fake_connect(addr, timeout=0):
+        raise real_socket.timeout("no route")
+
+    monkeypatch.setattr(d.socket, "create_connection", fake_connect)
+    assert d.internet_available() is False
+
+
+def test_internet_available_true_on_first_success(monkeypatch):
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(d.socket, "create_connection", lambda addr, timeout=0: _Conn())
+    assert d.internet_available() is True
+
+
+def test_report_carries_trigger_and_reason():
+    data = d.collect_report(
+        {"mode": "tun", "appMode": "include"}, probe_network=False, trigger="watchdog"
+    )
+    assert data["trigger"] == "watchdog"
+    assert "сторож" in d.render_text(data)
+
+
+def test_report_unknown_trigger_falls_back_to_manual():
+    data = d.collect_report({}, probe_network=False, trigger="что-то")
+    assert data["trigger"] == "manual"
+

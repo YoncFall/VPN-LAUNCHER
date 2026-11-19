@@ -1,0 +1,74 @@
+diff --git a/common/tls/reality_client.go b/common/tls/reality_client.go
+index be4806f..96693f4 100644
+--- a/common/tls/reality_client.go
++++ b/common/tls/reality_client.go
+@@ -146,21 +146,43 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	// Xray-core >= v26.9.8 in REALITY servers rejects ClientHello without an
++	// X25519MLKEM768 key share. Keep the hybrid group only when the chosen
++	// uTLS fingerprint sends both the group and the share; otherwise strip
++	// both halves (a group without a share triggers HelloRetryRequest, which
++	// REALITY cannot relay).
++	var hasHybridCurve, hasHybridShare bool
+ 	for _, extension := range uConn.Extensions {
+ 		if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
+-			ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
+-				return curveID != utls.X25519MLKEM768
+-			})
++			for _, curveID := range ce.Curves {
++				if curveID == utls.X25519MLKEM768 {
++					hasHybridCurve = true
++					break
++				}
++			}
+ 		}
+ 		if ks, ok := extension.(*utls.KeyShareExtension); ok {
+-			ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
+-				return share.Group != utls.X25519MLKEM768
+-			})
++			for _, share := range ks.KeyShares {
++				if share.Group == utls.X25519MLKEM768 {
++					hasHybridShare = true
++					break
++				}
++			}
+ 		}
+ 	}
+-	err = uConn.BuildHandshakeState()
+-	if err != nil {
+-		return nil, err
++	if !hasHybridCurve || !hasHybridShare {
++		for _, extension := range uConn.Extensions {
++			if ce, ok := extension.(*utls.SupportedCurvesExtension); ok {
++				ce.Curves = common.Filter(ce.Curves, func(curveID utls.CurveID) bool {
++					return curveID != utls.X25519MLKEM768
++				})
++			}
++			if ks, ok := extension.(*utls.KeyShareExtension); ok {
++				ks.KeyShares = common.Filter(ks.KeyShares, func(share utls.KeyShare) bool {
++					return share.Group != utls.X25519MLKEM768
++				})
++			}
++		}
+ 	}
+ 
+ 	if len(uConfig.NextProtos) > 0 {
+@@ -184,9 +206,13 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
+ 	}
+ 	binary.BigEndian.PutUint64(hello.SessionId, uint64(nowTime.Unix()))
+ 
+-	hello.SessionId[0] = 1
+-	hello.SessionId[1] = 8
+-	hello.SessionId[2] = 1
++	// REALITY client version advertised in SessionID. Xray servers since
++	// v26.7.11 compare it against minClientVer (default v26.3.27 in that
++	// range); the upstream sing-box value 1.8.1 is rejected outright. Report
++	// the Xray version whose behaviour we implement (ML-KEM key share).
++	hello.SessionId[0] = 26
++	hello.SessionId[1] = 9
++	hello.SessionId[2] = 8
+ 	binary.BigEndian.PutUint32(hello.SessionId[4:], uint32(time.Now().Unix()))
+ 	copy(hello.SessionId[8:], e.shortID[:])
+ 	if debug.Enabled {

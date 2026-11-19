@@ -32,6 +32,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -72,10 +73,31 @@ DNS_TIMEOUT = 6.0
 TCP_TIMEOUT = 5.0
 TLS_TIMEOUT = 7.0
 HTTP_TIMEOUT = 8.0
+# 2.4.7: сторож - два адреса Discord, повтор через 2 с, как в интерфейсе
+WATCHDOG_URLS: tuple[str, ...] = (
+    "https://discord.com/api/v9/gateway",
+    "https://gateway.discord.gg/api/gateway",
+)
+WATCHDOG_TIMEOUT = 5.0
+WATCHDOG_RETRY_DELAY = 2.0
+# Проверка «сеть вообще есть»: TCP без SNI, чтобы блокировка по имени не
+# выглядела как обрыв у провайдера (2.4.7).
+INTERNET_ENDPOINTS: tuple[tuple[str, int], ...] = (
+    ("1.1.1.1", 443),
+    ("8.8.8.8", 443),
+    ("77.88.8.8", 443),
+)
 MAX_REPORT_BYTES = 256 * 1024
 MAX_SEND_BYTES = 192 * 1024
 LOG_TAIL_LINES = 80
 LOG_TAIL_MAX = 12_000
+
+# Причина сбора: видна в отчёте и в мини-приложении владельца.
+TRIGGERS: dict[str, str] = {
+    "manual": "ручной запуск",
+    "dpi_fail": "автоподбор DPI не нашёл рабочую стратегию",
+    "watchdog": "сторож: Discord не отвечает при включённом обходе",
+}
 
 DIAG_DIR = install_root() / "diagnostics"
 
@@ -105,9 +127,20 @@ _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _MAC = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
 
 
-def redact(text: str) -> str:
-    """Убрать из строки всё, что может указать на человека или подписку."""
-    s = str(text)
+def _mask_identity(s: str) -> str:
+    """Имя ПК и пользователя - если встречаются отдельными словами."""
+    for secret in {socket.gethostname(), os.environ.get("USERNAME", "")}:
+        if secret and len(secret) > 2:
+            s = re.sub(
+                rf"(?<![A-Za-z0-9_-]){re.escape(secret)}(?![A-Za-z0-9_-])",
+                "<host>",
+                s,
+                flags=re.I,
+            )
+    return s
+
+
+def _redact_common(s: str) -> str:
     s = _HOME_WIN.sub(r"\1<user>", s)
     s = _HOME_NIX.sub(r"\1<user>", s)
     s = _PROXY_URI.sub("<subscription-link>", s)
@@ -116,12 +149,27 @@ def redact(text: str) -> str:
     s = _EMAIL.sub("<email>", s)
     s = _QUERY_SECRET.sub(r"\1<redacted>", s)
     s = _AUTH_HEADER.sub(r"\1<redacted>", s)
-    s = _LONG_TOKEN.sub("<token>", s)
-    # имя ПК и пользователя - если встречаются отдельными словами
-    for secret in {socket.gethostname(), os.environ.get("USERNAME", "")}:
-        if secret and len(secret) > 2:
-            s = re.sub(rf"(?<![A-Za-z0-9_-]){re.escape(secret)}(?![A-Za-z0-9_-])", "<host>", s, flags=re.I)
     return s
+
+
+def redact(text: str) -> str:
+    """Убрать из строки всё, что может указать на человека или подписку."""
+    s = _redact_common(str(text))
+    s = _LONG_TOKEN.sub("<token>", s)
+    return _mask_identity(s)
+
+
+def redact_arg(text: str) -> str:
+    """Аргумент winws: секреты убираем, технические токены оставляем.
+
+    2.4.7: общий redact() резал любые длинные токены - вместе с ними в отчёте
+    пропадали имена fake-файлов (`tls_clienthello_www_google_com.bin`) и
+    hex-пейлоады стратегии, без которых владелец не может её воспроизвести.
+    Для аргументов оставляем только то, что действительно выдаёт человека
+    (путь пользователя, подписка, uuid, e-mail, токен запроса), а IP/MAC и
+    длинные hex/имена файлов не трогаем.
+    """
+    return _mask_identity(_redact_common(str(text)))
 
 
 def redact_log(text: str) -> str:
@@ -138,10 +186,18 @@ def _redact_obj(value: Any, *, log: bool = False) -> Any:
     if isinstance(value, list):
         return [_redact_obj(v, log=log) for v in value]
     if isinstance(value, dict):
-        return {
-            str(k): _redact_obj(v, log=log or str(k) in {"logTail", "args"})
-            for k, v in value.items()
-        }
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k)
+            if key == "args":
+                # аргументы winws: только секреты, техданные сохраняем
+                if isinstance(v, list):
+                    out[key] = [redact_arg(str(a)) for a in v]
+                else:
+                    out[key] = redact_arg(str(v))
+            else:
+                out[key] = _redact_obj(v, log=log or key == "logTail")
+        return out
     return value
 
 
@@ -310,6 +366,54 @@ def http_probe(url: str, timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
         out["error"] = f"{type(exc).__name__}: {exc}"
     out["ms"] = int((time.monotonic() - started) * 1000)
     return out
+
+
+def discord_reachable(
+    urls: Sequence[str] = WATCHDOG_URLS,
+    *,
+    timeout: float = WATCHDOG_TIMEOUT,
+    retry_delay: float = WATCHDOG_RETRY_DELAY,
+) -> dict[str, Any]:
+    """Быстрая проверка сторожа: отвечает ли Discord хоть по одному адресу.
+
+    Провал - нет ответа вообще (таймаут, обрыв TLS, ошибка соединения);
+    любой HTTP-код считается ответом. Один повтор на адрес через retry_delay.
+    Возвращает {'ok': bool, 'results': [...]} без персональных данных.
+    """
+    results: list[dict[str, Any]] = []
+    for url in urls:
+        probe = http_probe(url, timeout=timeout)
+        ok = bool(probe.get("status")) and not probe.get("error")
+        if not ok:
+            if retry_delay > 0:
+                time.sleep(retry_delay)
+            probe = http_probe(url, timeout=timeout)
+            ok = bool(probe.get("status")) and not probe.get("error")
+        results.append(
+            {
+                "url": url,
+                "ok": ok,
+                "status": probe.get("status"),
+                "ms": probe.get("ms"),
+                "error": probe.get("error") or "",
+            }
+        )
+    return {"ok": any(r["ok"] for r in results), "results": results}
+
+
+def internet_available(timeout: float = 3.0) -> bool:
+    """Есть ли сеть вообще: TCP-коннект до публичных IP, без SNI и DNS.
+
+    Нужна сторожу, чтобы не перезапускать обход и не слать отчёт, когда
+    интернет просто отвалился у провайдера.
+    """
+    for ip, port in INTERNET_ENDPOINTS:
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 # ---- система и окружение --------------------------------------------------
@@ -597,8 +701,15 @@ def collect_report(
     *,
     progress: Callable[[str], None] | None = None,
     probe_network: bool = True,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
-    """Собрать отчёт. Сеть опрашивается последовательно, прогресс - в UI."""
+    """Собрать отчёт. Пробы идут параллельно, прогресс - в UI.
+
+    2.4.7: слои сети больше не ждут друг друга последовательно (раньше
+    худший случай - под две минуты, и человек успевал закрыть окно).
+    Теперь DNS, TCP, TLS и HTTPS идут одновременно, а общий предел задают
+    таймауты слоёв: DNS 6 с + TCP 5 с + TLS 7 с ~ 18 с.
+    """
     ctx = dict(context or {})
     report_id = uuid.uuid4().hex[:12]
     created = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -614,6 +725,7 @@ def collect_report(
     data: dict[str, Any] = {
         "id": report_id,
         "created": created,
+        "trigger": trigger if trigger in TRIGGERS else "manual",
         "system": collect_system(ctx),
         "network": {},
         "dns": [],
@@ -627,24 +739,40 @@ def collect_report(
     }
 
     if probe_network:
-        step("Сетевые параметры...")
-        data["network"] = collect_network()
-
+        step("Сетевые параметры и DNS...")
         hosts = DISCORD_HOSTS + YOUTUBE_HOSTS
-        for i, host in enumerate(hosts, 1):
-            step(f"DNS {i}/{len(hosts)}: {host}")
-            entry = dns_probe(host)
-            data["dns"].append(entry)
-            for ip in entry.get("v4", [])[:3]:
-                step(f"TCP/TLS {host} ({ip})")
-                t = tcp_probe(host, ip)
-                data["tcp"].append(t)
-                if t.get("ok"):
-                    data["tls"].append(tls_probe(host, ip))
+        workers = min(12, len(hosts) + 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # независимые ветки стартуют сразу: сеть, процессы Discord,
+            # DNS по всем хостам и HTTPS-пробы
+            f_net = pool.submit(collect_network)
+            f_disc = pool.submit(collect_discord)
+            f_dns = {h: pool.submit(dns_probe, h) for h in hosts}
+            f_http = [pool.submit(http_probe, url) for url in HTTP_PROBES]
 
-        for url in HTTP_PROBES:
-            step(f"HTTPS: {url}")
-            data["http"].append(http_probe(url))
+            entries = [f_dns[h].result() for h in hosts]
+            data["dns"] = entries
+            data["network"] = f_net.result()
+            data["discord"] = f_disc.result()
+
+            step("TCP/TLS Discord и YouTube...")
+            pairs = [
+                (entry.get("host"), ip)
+                for entry in entries
+                for ip in entry.get("v4", [])[:3]
+            ]
+            f_tcp = [pool.submit(tcp_probe, host, ip) for host, ip in pairs]
+            tcp_results = [f.result() for f in f_tcp]
+            data["tcp"] = tcp_results
+
+            tls_pairs = [
+                (t.get("host"), t.get("ip"))
+                for t in tcp_results
+                if t.get("ok")
+            ]
+            f_tls = [pool.submit(tls_probe, host, ip) for host, ip in tls_pairs]
+            data["tls"] = [f.result() for f in f_tls]
+            data["http"] = [f.result() for f in f_http]
 
     data["verdict"] = build_verdict(data)
     return _redact_obj(data)
@@ -659,6 +787,7 @@ def render_text(data: dict[str, Any]) -> str:
         "=" * 60,
         f"ID отчёта : {data.get('id', '')}",
         f"Время     : {data.get('created', '')}",
+        f"Причина   : {TRIGGERS.get(str(data.get('trigger') or ''), 'не указана')}",
         f"Версия    : {sysd.get('version', '')}",
         "",
         "ВЕРДИКТ",
@@ -861,13 +990,14 @@ def run_diagnostics(
     send: bool = True,
     endpoint: str = "",
     progress: Callable[[str], None] | None = None,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
     """Полный цикл: собрать -> сохранить -> (опционально) отправить.
 
     Возвращает {'data','text','txt','json','sent','message'} - UI и журнал
     показывают ровно то, что произошло, без «тихих» отправок.
     """
-    data = collect_report(context, progress=progress)
+    data = collect_report(context, progress=progress, trigger=trigger)
     text = render_text(data)
     txt, js = save_report(data, text)
     sent, message = False, ""
@@ -875,6 +1005,7 @@ def run_diagnostics(
         sent, message = send_report(data, text, endpoint)
     write_log(
         f"diagnostics: report {data.get('id')} saved ({txt.name}); "
+        f"trigger={data.get('trigger')}; "
         f"verdict={data.get('verdict', {}).get('code')}; send={sent} {message}".strip()
     )
     return {

@@ -77,6 +77,7 @@ def win(qapp):
     yield w
     w.tick.stop()
     w.zapret_tick.stop()
+    w.watch_tick.stop()
     w.close()
 
 
@@ -2184,3 +2185,139 @@ class TestZapret:
         monkeypatch.setattr(cstate, "STATE_FILE", tmp_path / "state.json")
         cstate.save_state({"zapretStrategy": "general (ALT3)"})
         assert cstate.load_state().get("zapretStrategy") == "general (ALT3)"
+
+
+class TestWatchdog:
+    """Сторож 2.4.7: сам перезапускает обход, отчёт - крайняя мера."""
+
+    class _Signal:
+        def connect(self, fn):  # noqa: ANN001
+            self.fn = fn
+
+    class _Worker:
+        def __init__(self) -> None:
+            self.done = TestWatchdog._Signal()
+            self.started = False
+
+        def isRunning(self) -> bool:  # noqa: N802
+            return False
+
+        def start(self) -> None:
+            self.started = True
+
+    def test_watchdog_restarts_dpi_instead_of_report(self, win, monkeypatch):
+        from vpn_launcher.ui import window as wmod
+
+        picks: list = []
+        reports: list = []
+        monkeypatch.setattr(wmod, "is_elevated", lambda: True)
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: picks.append(preferred))
+        monkeypatch.setattr(win, "_run_diagnostics", lambda **kw: reports.append(kw))
+
+        win._watch_done({"ok": False})
+
+        assert picks == [None], "вместо отчёта запускается автоподбор"
+        assert reports == [], "отчёт пока не нужен"
+        assert len(win._watch_recover_times) == 1
+        assert win._watchdog_recovering is False
+
+    def test_watchdog_reports_when_restart_limit_reached(self, win, monkeypatch):
+        import time as _time
+
+        reports: list = []
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: None)
+        monkeypatch.setattr(win, "_run_diagnostics", lambda **kw: reports.append(kw))
+        now = _time.monotonic()
+        win._watch_recover_times = [now, now, now]  # лимит 3 в час исчерпан
+
+        win._watch_done({"ok": False})
+
+        assert reports and reports[0]["trigger"] == "watchdog"
+        assert reports[0]["auto"] is True
+
+    def test_watchdog_waits_ten_minutes_between_restarts(self, win, monkeypatch):
+        import time as _time
+
+        picks: list = []
+        reports: list = []
+        monkeypatch.setattr("vpn_launcher.ui.window.is_elevated", lambda: True)
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: picks.append(preferred))
+        monkeypatch.setattr(win, "_run_diagnostics", lambda **kw: reports.append(kw))
+        win._watch_recover_times = [_time.monotonic() - 60]  # минуту назад
+
+        win._watch_done({"ok": False})
+
+        assert picks == [] and reports == []
+        assert len(win._watch_recover_times) == 1
+
+    def test_watchdog_silent_when_no_internet(self, win, monkeypatch):
+        picks: list = []
+        reports: list = []
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        monkeypatch.setattr(win, "_zapret_pick", lambda preferred=None: picks.append(preferred))
+        monkeypatch.setattr(win, "_run_diagnostics", lambda **kw: reports.append(kw))
+
+        win._watch_done({"ok": True, "offline": True})
+
+        assert picks == [] and reports == []
+
+    def test_watchdog_silent_when_discord_answers(self, win, monkeypatch):
+        reports: list = []
+        monkeypatch.setattr(win, "_run_diagnostics", lambda **kw: reports.append(kw))
+        win._watch_done({"ok": True})
+        assert reports == []
+
+    def test_tick_skips_when_dpi_off(self, win, monkeypatch):
+        from vpn_launcher.ui import window as wmod
+
+        started: list = []
+        monkeypatch.setattr(
+            wmod,
+            "DiscordWatchWorker",
+            lambda: started.append(True) or self._Worker(),
+        )
+        monkeypatch.setattr(win._zapret, "running", lambda: False)
+        win.proc = None
+
+        win._watchdog_tick()
+
+        assert started == []
+
+    def test_tick_waits_15s_and_then_checks(self, win, monkeypatch):
+        import time as _time
+
+        from vpn_launcher.ui import window as wmod
+
+        started: list = []
+        monkeypatch.setattr(
+            wmod,
+            "DiscordWatchWorker",
+            lambda: started.append(True) or self._Worker(),
+        )
+        monkeypatch.setattr(wmod, "get_running_exe_list", lambda: ["Discord.exe"])
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        win._diag_last_auto = 0.0
+        win._watch_discord_since = 0.0
+
+        win._watchdog_tick()  # первый круг только запоминает Discord
+        assert started == []
+        assert win._watch_discord_since > 0
+
+        win._watch_discord_since = _time.monotonic() - 20
+        win._watchdog_tick()
+        assert started == [True]
+
+    def test_tick_forgets_discord_after_close(self, win, monkeypatch):
+        from vpn_launcher.ui import window as wmod
+
+        monkeypatch.setattr(wmod, "get_running_exe_list", lambda: [])
+        monkeypatch.setattr(win._zapret, "running", lambda: True)
+        win._watch_discord_since = 123.0
+
+        win._watchdog_tick()
+
+        assert win._watch_discord_since == 0.0
+

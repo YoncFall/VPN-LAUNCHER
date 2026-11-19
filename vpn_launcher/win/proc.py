@@ -108,7 +108,9 @@ _LOG_MAX = 2 * 1024 * 1024  # PS: если singbox.log > 2MB - удалить (V
 # sing-box.exe (логин/пароли нод и весь трафик в его руках) должна быть
 # замечена, а не выполнена. При обновлении движка константу меняют
 # сознательно - тест test_engine_hash_pinned не даст забыть.
-ENGINE_SHA256 = "7BBEF1DEA9189EE12799AE834EA4B4658355DA25C47A21AD8804904C0CCD9410"
+# 15.11.2026: 1.14.4 собрана из исходников с патчем REALITY (ML-KEM
+# key share + версия клиента), см. tools/sing-box-patch/README.md.
+ENGINE_SHA256 = "EF54F7B7DE1CDEA632614D1492249CB07C5EBF44D1D33FF3C6E9459A512C63D5"
 
 
 def engine_hash(path: Path | str | None = None) -> str:

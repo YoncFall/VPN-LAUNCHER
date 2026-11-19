@@ -102,6 +102,7 @@ from vpn_launcher.win.proxy import (
 from vpn_launcher.win.wfp import install_kill_switch, remove_kill_switch
 from vpn_launcher.workers import (
     DiagnosticsWorker,
+    DiscordWatchWorker,
     EgressWorker,
     PingWorker,
     SubscriptionWorker,
@@ -215,6 +216,12 @@ class MainWindow(QWidget):
         # 2.4.6: диагностика Discord (сеть/DPI/клиент) - тяжёлые пробы в фоне
         self._diag_worker: DiagnosticsWorker | None = None
         self._diag_last_auto = 0.0
+        # 2.4.7: сторож - Discord запущен, обход включён, адреса не отвечают
+        self._watch_worker: DiscordWatchWorker | None = None
+        self._watch_discord_since = 0.0
+        # авто-перезапуск обхода: не чаще раза в 10 минут, максимум 3 в час
+        self._watch_recover_times: list[float] = []
+        self._watchdog_recovering = False
         # видимое окно (WebWindow при HTML-интерфейсе; None при --qt-ui и в
         # тестах). Перезапуск с правами берёт позицию у него - см.
         # _visible_window
@@ -241,6 +248,13 @@ class MainWindow(QWidget):
         self.zapret_tick.setInterval(1000)
         self.zapret_tick.timeout.connect(self._zapret_sync)
         self.zapret_tick.start()
+
+        # сторож 2.4.7: раз в минуту, только при включённом обходе и
+        # запущенном Discord (см. _watchdog_tick)
+        self.watch_tick = QTimer(self)
+        self.watch_tick.setInterval(60_000)
+        self.watch_tick.timeout.connect(self._watchdog_tick)
+        self.watch_tick.start()
 
     # ---- chrome ----------------------------------------------------------
     def _apply_mask(self) -> None:
@@ -611,6 +625,9 @@ class MainWindow(QWidget):
         if not is_elevated():
             self._zapret_elevate()
             return
+        if not self._watchdog_recovering:
+            # ручной перезапуск - доверие пользователю: лимиты сторожа сброшены
+            self._watch_recover_times = []
         if preferred is None and self._zapret.running():
             self._zapret.stop()
         write_log(
@@ -638,7 +655,7 @@ class MainWindow(QWidget):
             # работает». Собираем отчёт автоматически (обезличенный,
             # зашифрованный) - иначе владелец сборки никогда не увидит
             # причину: пользователь лог не пришлёт.
-            self._run_diagnostics(auto=True)
+            self._run_diagnostics(auto=True, trigger="dpi_fail")
         self._zapret_sync()  # лампа/ракета сразу отражают итог подбора
 
     # ---- диагностика Discord (2.4.6) -------------------------------------
@@ -656,13 +673,14 @@ class MainWindow(QWidget):
     def _diag_busy(self) -> bool:
         return self._diag_worker is not None and self._diag_worker.isRunning()
 
-    def _run_diagnostics(self, *, auto: bool = False) -> None:
-        """Собрать отчёт в фоне; manual - по кнопке, auto - после провала DPI.
+    def _run_diagnostics(self, *, auto: bool = False, trigger: str = "manual") -> None:
+        """Собрать отчёт в фоне; auto - после провала DPI или сторожем.
 
         Отправка: по кнопке - всегда (явное действие пользователя), автомати-
         чески - только если не отключена в state.json (diagAutoSend, по
         умолчанию включена). Адрес приёмника воркер резолвит сам, чтобы не
-        морозить окно сетевым запросом.
+        морозить окно сетевым запросом. trigger попадает в отчёт, чтобы в
+        мини-приложении было видно, почему он собран.
         """
         if self._diag_busy():
             if not auto:
@@ -678,7 +696,9 @@ class MainWindow(QWidget):
         self._status(
             "Диагностика: проверяю DNS/TCP/TLS Discord (до минуты)...", theme.WARN
         )
-        worker = DiagnosticsWorker(self._diag_context(), send=allow, endpoint=None)
+        worker = DiagnosticsWorker(
+            self._diag_context(), send=allow, endpoint=None, trigger=trigger
+        )
         worker.progress.connect(lambda t: self._status("Диагностика: " + t, theme.WARN))
         worker.done.connect(lambda r: self._diag_done(r, auto=auto))
         self._diag_worker = worker
@@ -721,6 +741,78 @@ class MainWindow(QWidget):
         lines += [f"{i}. {a}" for i, a in enumerate(actions, 1)]
         lines += ["", tail, f"Файл: {path}"]
         self._msg("\n".join(lines), "Диагностика Discord")
+
+    # ---- сторож Discord (2.4.7) ------------------------------------------
+    def _watchdog_tick(self) -> None:
+        """Раз в минуту: обход включён, Discord запущен, адреса не отвечают.
+
+        Пока Discord закрыт или работает меньше 15 с - молчим: обычный
+        старт клиента не должен выглядеть как авария. Отчёт уходит не чаще
+        раза в 30 минут (общий с автоподбором DPI счётчик).
+        """
+        if self._watch_worker is not None and self._watch_worker.isRunning():
+            return
+        if self._diag_busy():
+            return
+        if self._zapret_worker is not None and self._zapret_worker.isRunning():
+            return  # идёт подбор: пробы всё равно не показательны
+        tunnel = self.proc is not None and self.proc.poll() is None
+        if not (self._zapret.running() or tunnel):
+            self._watch_discord_since = 0.0
+            return
+        if "Discord.exe" not in get_running_exe_list():
+            self._watch_discord_since = 0.0
+            return
+        now = time.monotonic()
+        if not self._watch_discord_since:
+            self._watch_discord_since = now
+            return
+        if now - self._watch_discord_since < 15:
+            return
+        if now - self._diag_last_auto < 1800:
+            return  # отчёт уже уходил недавно - не спамим
+        self._watch_worker = DiscordWatchWorker()
+        self._watch_worker.done.connect(self._watch_done)
+        self._watch_worker.start()
+
+    def _watch_done(self, result: dict) -> None:
+        """Discord не отвечает: сначала сами перезапускаем обход, отчёт - крайний случай.
+
+        Так пользователь не пишет в поддержку «DPI не работает»: программа
+        делает то же, что он сделал бы сам (правый клик по DPI), и молча
+        продолжает работу. Отчёт уходит только если подбор ничего не нашёл
+        (его пришлёт _zapret_done) или перезапуск уже исчерпан.
+        """
+        if not isinstance(result, dict) or result.get("ok"):
+            return
+        if result.get("offline"):
+            write_log("watchdog: интернета нет - перезапуск и отчёт не нужны")
+            return
+
+        now = time.monotonic()
+        self._watch_recover_times = [
+            t for t in self._watch_recover_times if now - t < 3600
+        ]
+        dpi_can_restart = self._zapret.running() and is_elevated()
+        if dpi_can_restart and len(self._watch_recover_times) < 3:
+            if (
+                self._watch_recover_times
+                and now - self._watch_recover_times[-1] < 600
+            ):
+                return  # перезапускали меньше 10 минут назад - ждём следующий круг
+            self._watch_recover_times.append(now)
+            write_log("watchdog: Discord не отвечает - перезапускаю обход DPI")
+            self._status("Обход DPI перезапускается...", theme.WARN)
+            self._watch_discord_since = 0.0
+            self._watchdog_recovering = True
+            try:
+                self._zapret_pick()  # при провале подбор сам пришлёт отчёт
+            finally:
+                self._watchdog_recovering = False
+            return
+
+        write_log("watchdog: перезапуск не помог - собираю отчёт")
+        self._run_diagnostics(auto=True, trigger="watchdog")
 
     def _zapret_autostart(self) -> None:
         """--autozapret: продолжение после повышения прав (как autoconnect)."""
@@ -1418,9 +1510,20 @@ class MainWindow(QWidget):
     def closeEvent(self, e) -> None:  # noqa: N802
         self.tick.stop()
         self.zapret_tick.stop()
+        self.watch_tick.stop()
         self.btn_zapret.close()  # плашка-ракета - отдельное окно, сиротой не остаётся
         if self._pinger is not None:
             self._pinger.cancel()
+        # 2.4.7: отчёт уже собирается/отправляется - даём до 10 с, иначе
+        # пользователь закроет окно и владелец не узнает причину
+        if self._diag_worker is not None and self._diag_worker.isRunning():
+            if not self._diag_worker.wait(10_000):
+                self._diag_worker.terminate()
+                self._diag_worker.wait(500)
+        if self._watch_worker is not None and self._watch_worker.isRunning():
+            if not self._watch_worker.wait(2000):
+                self._watch_worker.terminate()
+                self._watch_worker.wait(500)
         for w in (self._pinger, self._loader, self._egress, self._zapret_worker):
             if w is not None and not w.wait(2000):
                 w.terminate()  # порт BeginStop - принудительная остановка

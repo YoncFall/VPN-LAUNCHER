@@ -180,11 +180,14 @@ class DiagnosticsWorker(QThread):
     progress = Signal(str)
     done = Signal(object)
 
-    def __init__(self, context: dict, *, send: bool, endpoint: str | None) -> None:
+    def __init__(
+        self, context: dict, *, send: bool, endpoint: str | None, trigger: str = "manual"
+    ) -> None:
         super().__init__()
         self._context = dict(context)
         self._send = bool(send)
         self._endpoint = endpoint
+        self._trigger = trigger
 
     def run(self) -> None:
         try:
@@ -199,8 +202,35 @@ class DiagnosticsWorker(QThread):
                 send=self._send and bool(endpoint),
                 endpoint=endpoint or "",
                 progress=lambda t: self.progress.emit(t),
+                trigger=self._trigger,
             )
             result["endpoint"] = endpoint or ""
             self.done.emit(result)
         except Exception as exc:  # noqa: BLE001 - отчёт не должен ронять UI
             self.done.emit({"error": f"{type(exc).__name__}: {exc}"})
+
+
+class DiscordWatchWorker(QThread):
+    """Сторож (2.4.7): есть ли сеть вообще и отвечает ли Discord.
+
+    Сначала проверяется общий интернет (TCP до 1.1.1.1/8.8.8.8 без SNI):
+    при обрыве у провайдера перезапуск обхода и отчёт бессмысленны. Затем
+    два адреса Discord с повтором через 2 с. Работает в фоне: при мёртвой
+    сети каждый адрес ждёт таймаут дважды.
+    """
+
+    done = Signal(object)
+
+    def run(self) -> None:
+        try:
+            from vpn_launcher.core.diagnostics import (
+                discord_reachable,
+                internet_available,
+            )
+
+            if not internet_available():
+                self.done.emit({"ok": True, "offline": True})
+                return
+            self.done.emit(discord_reachable())
+        except Exception as exc:  # noqa: BLE001 - сторож не должен ронять UI
+            self.done.emit({"ok": True, "error": f"{type(exc).__name__}: {exc}"})
