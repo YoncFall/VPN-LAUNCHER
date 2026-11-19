@@ -13,6 +13,7 @@ singbox.log
 singbox.log.err
 cache.db
 app.pid
+update.lock
 watch-internet.log
 watch-internet.log.old
 
