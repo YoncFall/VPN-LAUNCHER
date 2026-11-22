@@ -38,7 +38,7 @@ static class Setup
 
     const string ProductName = "VPN ЛАУНЧЕР";
     const string ProductId = "YoncFALL_VPN_Launcher";
-    const string Version = "2.4.8";
+    const string Version = "2.4.9";
     const string Publisher = "@YoncFALL";
     const string ExeName = "VPNLauncher.exe";
     const string UninstallerName = "uninstall.exe";
@@ -52,9 +52,29 @@ static class Setup
 
     static string DefaultDir()
     {
-        return Path.Combine(
+        string fallback = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Programs", "VPNLauncher");
+
+        // 2.4.9: если программа уже установлена в другую папку, предлагаем её
+        // же. Иначе обычный запуск Setup.exe (без /DIR) ставил вторую копию в
+        // профиль, а прежнюю удалял вместе с state.json.
+        try
+        {
+            using (Microsoft.Win32.RegistryKey k =
+                Microsoft.Win32.Registry.CurrentUser.OpenSubKey(UnregKey))
+            {
+                string dir = k == null ? null : k.GetValue("InstallLocation") as string;
+                if (!string.IsNullOrEmpty(dir) &&
+                    File.Exists(Path.Combine(dir, ExeName)))
+                {
+                    if (dir.Length > 3) dir = dir.TrimEnd('\\');
+                    return dir;
+                }
+            }
+        }
+        catch { }
+        return fallback;
     }
 
     [STAThread]
@@ -137,7 +157,15 @@ static class Setup
             if (up == "/S" || up == "-S" || up == "/SILENT" || up == "/VERYSILENT") Silent = true;
             else if (up == "/NOICONS" || up == "-NOICONS") NoIcons = true;
             else if (up == "/NORUN" || up == "-NORUN") NoRun = true;
-            else if (up.StartsWith("/DIR=")) TargetDir = a.Substring(5).Trim('"').TrimEnd('\\');
+            else if (up.StartsWith("/DIR="))
+            {
+                // пробелы/кавычки вокруг пути - от разных способов запуска;
+                // корень диска (C:\) не трогаем, иначе получится "C:" и
+                // Path.Combine даст путь относительно текущей папки
+                string dir = a.Substring(5).Trim().Trim('"').Trim();
+                if (dir.Length > 3) dir = dir.TrimEnd('\\');
+                TargetDir = dir;
+            }
         }
     }
 
@@ -513,6 +541,13 @@ static class Setup
         // программа может быть запущена: закрываем её до копирования файлов,
         // иначе Windows не даст заменить её собственный exe
         bool busy = StopApp();
+        // 2.4.9: winws/sing-box могли пережить закрытие программы (например,
+        // запущены с правами) и держат zapret\bin\cygwin1.dll / sing-box.exe.
+        // Тогда копирование падало на "файл занят другим процессом" уже после
+        // замены VPNLauncher.exe - обновление выглядело успешным, а файлы
+        // движка оставались старыми (20.11.2026). Без прав такой процесс не
+        // убить, поэтому перезапускаемся с повышением.
+        if (!busy) busy = EngineFilesLocked();
 
         // Повышенная копия приложения с нашего уровня не гасится: CloseMainWindow
         // глушится UIPI, HasExited/Kill падают с "Отказано в доступе"
@@ -530,9 +565,23 @@ static class Setup
         string oldDir = RegisteredDir() ?? string.Empty;
         Log("зарегистрированная папка: " + (oldDir.Length == 0 ? "(нет)" : oldDir));
         Log("целевая папка          : " + TargetDir);
+        string oldState = null;
         if (!string.IsNullOrEmpty(oldDir) &&
             !string.Equals(oldDir.TrimEnd('\\'), TargetDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
         {
+            // 2.4.9: при смене папки старую установку удаляют вместе с
+            // state.json (ссылка на подписку). Забираем настройки заранее и
+            // возвращаем в новую папку после копирования файлов.
+            try
+            {
+                string stateFile = Path.Combine(oldDir, "state.json");
+                if (File.Exists(stateFile))
+                {
+                    oldState = File.ReadAllText(stateFile);
+                    Log("настройки старой установки прочитаны");
+                }
+            }
+            catch (Exception ex) { Log("state.json старой установки: " + ex.Message); }
             Log("старая установка в другом месте, удаляю: " + oldDir);
             RemoveOldInstall(oldDir);
         }
@@ -551,6 +600,21 @@ static class Setup
             Directory.CreateDirectory(TargetDir);
             CopyTree(tmp, TargetDir);
             Log("файлы скопированы");
+
+            // 2.4.9: вернуть настройки, забранные из старой папки
+            if (oldState != null)
+            {
+                try
+                {
+                    string dst = Path.Combine(TargetDir, "state.json");
+                    if (!File.Exists(dst))
+                    {
+                        File.WriteAllText(dst, oldState, new System.Text.UTF8Encoding(false));
+                        Log("настройки перенесены в новую папку");
+                    }
+                }
+                catch (Exception ex) { Log("перенос настроек: " + ex.Message); }
+            }
 
             prog(78, "Проверка файлов");
             if (!File.Exists(Path.Combine(TargetDir, ExeName)))
@@ -1083,7 +1147,7 @@ static class Setup
 
         try
         {
-            foreach (string name in new string[] { "VPNLauncher", "uninstall", "sing-box" })
+            foreach (string name in new string[] { "VPNLauncher", "uninstall", "sing-box", "winws" })
             {
                 foreach (Process p in Process.GetProcessesByName(name))
                 {
@@ -1102,8 +1166,9 @@ static class Setup
                     // VPNLauncher - только при обновлении/удалении (см. выше;
                     // для повышенного процесса путь всё равно не читается,
                     // поэтому решает наличие своего exe в целевой папке);
-                    // uninstall.exe и sing-box - когда они лежат в целевой
-                    // папке: чужой sing-box (например, от другой программы) не трогаем
+                    // uninstall.exe, sing-box и winws - когда они лежат в
+                    // целевой папке: чужие копии (например, от другой
+                    // программы) не трогаем
                     if (name == "VPNLauncher")
                     {
                         if (!ownExeInTarget) continue;
@@ -1178,6 +1243,44 @@ static class Setup
             return false;
         }
         catch (IOException) { return true; }
+        catch { return false; }
+    }
+
+    // 2.4.9: файлы движка заняты работающим winws/sing-box. Такой процесс мог
+    // остаться после закрытия программы (в т.ч. запущенный с правами) и держит
+    // zapret\bin\cygwin1.dll. Без прав его не остановить, поэтому установщик
+    // перезапускается с повышением (код 4), а не падает на копировании.
+    static bool EngineFilesLocked()
+    {
+        if (FileLocked(Path.Combine(TargetDir, "sing-box.exe"))) return true;
+        try
+        {
+            string bin = Path.Combine(TargetDir, "zapret", "bin");
+            if (Directory.Exists(bin))
+            {
+                foreach (string f in Directory.GetFiles(bin))
+                {
+                    string ext = Path.GetExtension(f);
+                    if (!ext.Equals(".dll", StringComparison.OrdinalIgnoreCase) &&
+                        !ext.Equals(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (FileLocked(f)) return true;
+                }
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    static bool FileLocked(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            using (FileStream s = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read)) { }
+            return false;
+        }
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
         catch { return false; }
     }
 
@@ -1363,12 +1466,36 @@ static class Setup
             {
                 Text = TargetDir,
                 Location = new Point(0, 118),
-                Width = 470,
+                Width = 380,
                 BackColor = Card,
                 ForeColor = Text,
                 BorderStyle = BorderStyle.FixedSingle
             };
             welcome.Controls.Add(dirBox);
+
+            // 2.4.9: без кнопки путь приходилось набирать вручную
+            Button browse = new Button
+            {
+                Text = "Обзор...",
+                Location = new Point(386, 117),
+                Size = new Size(84, 24),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Card,
+                ForeColor = Text
+            };
+            browse.FlatAppearance.BorderColor = Line;
+            browse.Click += delegate
+            {
+                using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                {
+                    dlg.Description = "Куда установить " + ProductName;
+                    dlg.SelectedPath = dirBox.Text;
+                    dlg.ShowNewFolderButton = true;
+                    if (dlg.ShowDialog(f) == DialogResult.OK)
+                        dirBox.Text = dlg.SelectedPath;
+                }
+            };
+            welcome.Controls.Add(browse);
 
             deskBox = new CheckBox
             {
@@ -1561,7 +1688,10 @@ static class Setup
 
             if (code == 0)
             {
-                if (NoRun) StartApp();
+                // приложение уже запущено внутри RunInstall (если галочка
+                // стоит); здесь только экран «Установлено» с кнопкой запуска.
+                // Раньше тут стояло if (NoRun) StartApp(): при СНЯТОЙ галочке
+                // программа всё равно открывалась, да ещё вторым экземпляром.
                 busy.Visible = false;
                 done.Visible = true;
                 Application.DoEvents();

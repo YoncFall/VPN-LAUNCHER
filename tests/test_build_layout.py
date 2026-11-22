@@ -115,6 +115,44 @@ class TestSetupSideBySide:
         assert i_gate < i_kill
 
 
+class TestSetupInstallDir:
+    """2.4.9: путь установки можно выбрать, и обновление его не теряет."""
+
+    def test_default_dir_follows_registered_install(self):
+        # без этого повторный запуск Setup.exe ставил вторую копию в профиль
+        cs = _read("installer/Setup.cs")
+        assert 'k.GetValue("InstallLocation") as string' in cs
+        assert "File.Exists(Path.Combine(dir, ExeName))" in cs
+
+    def test_browse_button_present(self):
+        cs = _read("installer/Setup.cs")
+        assert "FolderBrowserDialog" in cs
+        assert "Обзор..." in cs
+
+    def test_run_checkbox_is_respected(self):
+        # было if (NoRun) StartApp(): при снятой галочке приложение всё равно
+        # открывалось, да ещё вторым экземпляром
+        cs = _read("installer/Setup.cs")
+        assert "if (NoRun) StartApp();" not in cs
+        assert "if (!NoRun && !Silent) StartApp();" in cs
+
+    def test_state_moves_with_install_dir(self):
+        cs = _read("installer/Setup.cs")
+        assert 'Path.Combine(oldDir, "state.json")' in cs
+        assert "File.WriteAllText(dst, oldState" in cs
+
+    def test_winws_is_stopped_before_copy(self):
+        # 20.11.2026: winws держал zapret\bin\cygwin1.dll, копирование
+        # обрывалось после замены exe, а версия уже выглядела новой
+        cs = _read("installer/Setup.cs")
+        assert '"sing-box", "winws"' in cs
+
+    def test_locked_engine_files_trigger_elevation(self):
+        cs = _read("installer/Setup.cs")
+        assert "if (!busy) busy = EngineFilesLocked();" in cs
+        assert 'Path.Combine(TargetDir, "zapret", "bin")' in cs
+
+
 class TestSetupUpdateOverElevated:
     """Обновление поверх повышенного приложения (30.09.2026).
 

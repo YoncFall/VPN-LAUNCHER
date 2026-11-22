@@ -162,11 +162,17 @@ def helper_script(
     setup_path: Path,
     app_path: Path,
     target_version: str = "",
+    install_dir: Path | str | None = None,
 ) -> str:
     """PowerShell-скрипт: дождаться нашего выхода, тихо установить, запустить.
 
     /S - тихий режим установщика. После установки приложение запускается
     само (в тихом режиме Setup.cs этого не делает).
+
+    2.4.9: helper передаёт /DIR=<папка установки>. Без него Setup.exe ставит
+    обновление в папку по умолчанию (%LOCALAPPDATA%\\Programs\\VPNLauncher),
+    а при нестандартном пути ещё и удаляет прежнюю установку - обновление
+    «переезжало» и теряло state.json.
 
     2.4.8: helper работает без единого окна. Он ждёт смены версии (в том
     числе когда установщик перезапустился с правами и вернул код 4), при
@@ -179,14 +185,19 @@ def helper_script(
     """
     return (
         "param([int]$WaitPid, [string]$Setup, [string]$App, [string]$TargetVer,"
-        " [string]$Lock)\n"
+        " [string]$Lock, [string]$Dir)\n"
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         "try { Wait-Process -Id $WaitPid -Timeout 300 -ErrorAction Stop } catch {}\n"
         "function Get-Ver([string]$p) {\n"
         "  try { return [string](Get-Item -LiteralPath $p).VersionInfo.FileVersion }"
         " catch { return '' }\n"
         "}\n"
-        "$p = Start-Process -FilePath $Setup -ArgumentList '/S' -PassThru\n"
+        "# /DIR= ставит обновление в ту же папку, где лежит работающая копия\n"
+        "# (2.4.9). Кавычки внутри аргумента: Start-Process не экранирует\n"
+        "# пробелы в путях сам.\n"
+        "$sa = @('/S')\n"
+        "if ($Dir) { $sa += '/DIR=\"' + $Dir + '\"' }\n"
+        "$p = Start-Process -FilePath $Setup -ArgumentList $sa -PassThru\n"
         "try { $null = $p.WaitForExit(600000) } catch {}\n"
         "$code = ''\n"
         "try { $code = [string]$p.ExitCode } catch {}\n"
@@ -211,7 +222,15 @@ def helper_script(
         "  }\n"
         "}\n"
         "$now = Get-Ver $App\n"
-        "if ($TargetVer -and -not $ok) {\n"
+        "# 2.4.9: код установщика тоже важен. Раньше при занятом файле\n"
+        "# (zapret\\bin\\cygwin1.dll держал winws) Setup успевал заменить\n"
+        "# VPNLauncher.exe и падал: версия уже новая, ошибка скрыта.\n"
+        "$failed = $false\n"
+        "if ($TargetVer) {\n"
+        "  if (-not $ok) { $failed = $true }\n"
+        "  elseif ($code -and $code -ne '0' -and $code -ne '4') { $failed = $true }\n"
+        "}\n"
+        "if ($failed) {\n"
         "  $log = Join-Path $env:TEMP 'vpnlauncher_setup.log'\n"
         "  $err = Join-Path $env:TEMP 'vpnlauncher_update_error.txt'\n"
         "  $tail = ''\n"
@@ -236,11 +255,12 @@ def write_helper(
     setup_path: Path,
     app_path: Path,
     target_version: str = "",
+    install_dir: Path | str | None = None,
 ) -> Path:
     """Записать helper-скрипт рядом со Setup.exe и вернуть его путь."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
-        helper_script(setup_path, app_path, target_version),
+        helper_script(setup_path, app_path, target_version, install_dir),
         encoding="utf-8-sig",
     )
     return dest
@@ -252,6 +272,7 @@ def launch_helper(
     app_path: Path,
     target_version: str = "",
     lock_path: Path | None = None,
+    install_dir: Path | str | None = None,
 ) -> None:
     """Запустить helper отвязанно, без единого видимого окна.
 
@@ -281,6 +302,8 @@ def launch_helper(
     ]
     if lock_path is not None:
         args += ["-Lock", str(lock_path)]
+    if install_dir:
+        args += ["-Dir", str(install_dir)]
     kwargs: dict[str, object] = {
         "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,
     }

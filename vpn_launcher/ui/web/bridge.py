@@ -171,11 +171,13 @@ class Bridge(QObject):
         version = str(info.get("version") or "")
         setup = Path(path)
         app = Path(sys.executable)  # frozen: наш exe в папке установки
+        # 2.4.9: обновление ставится в ту же папку, а не в папку по умолчанию
+        install_dir = app.parent
         lock = update_lock_path()
         write_update_lock(version)
         helper = Path(tempfile.gettempdir()) / f"VPN-LAUNCHER-update-{os.getpid()}.ps1"
-        write_helper(helper, setup, app, version)
-        launch_helper(helper, setup, app, version, lock)
+        write_helper(helper, setup, app, version, install_dir)
+        launch_helper(helper, setup, app, version, lock, install_dir)
         write_log(f"update: helper started, target {version or '?'}")
         if self._update is not None:
             self._update["phase"] = "installing"

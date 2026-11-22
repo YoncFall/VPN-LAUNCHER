@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -129,6 +131,51 @@ def test_helper_script_waits_for_pid_then_installs_silently(tmp_path):  # noqa: 
     assert "Remove-Item -LiteralPath $Lock" in script
     # ждём смены версии, а не только код возврата установщика
     assert "$TargetVer" in script
+    # 2.4.9: ненулевой код установщика - тоже ошибка, даже если версия уже
+    # сменилась (частичное копирование из-за занятого файла)
+    assert "$code -ne '0'" in script
+    assert "$code -ne '4'" in script
+
+
+def test_helper_script_installs_into_given_folder(tmp_path):  # noqa: ANN001
+    """2.4.9: обновление ставится туда, где стоит программа.
+
+    Без /DIR Setup.exe ставил в %LOCALAPPDATA%\\Programs\\VPNLauncher и при
+    нестандартном пути удалял прежнюю копию вместе с state.json.
+    """
+    script = upd.helper_script(
+        tmp_path / "Setup.exe",
+        tmp_path / "VPNLauncher.exe",
+        "2.4.9",
+        tmp_path / "Install Dir",
+    )
+    assert "[string]$Dir" in script
+    assert "$sa += '/DIR=\"' + $Dir + '\"'" in script
+    assert "-ArgumentList $sa" in script
+    # путь с пробелами обязан попасть в кавычках
+    assert "'/DIR=\"'" in script
+
+
+def test_launch_helper_passes_dir(tmp_path, monkeypatch):  # noqa: ANN001
+    import subprocess  # noqa: PLC0415
+
+    captured: dict[str, object] = {}
+
+    def fake_popen(args, **kwargs):  # noqa: ANN001, ANN003
+        captured["args"] = list(args)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    install_dir = tmp_path / "Install Dir"
+    upd.launch_helper(
+        tmp_path / "helper.ps1",
+        tmp_path / "Setup.exe",
+        tmp_path / "App.exe",
+        "2.4.9",
+        tmp_path / "update.lock",
+        install_dir,
+    )
+    args = captured["args"]
+    assert args[args.index("-Dir") + 1] == str(install_dir)
 
 
 def test_write_helper_is_utf8_with_bom(tmp_path):  # noqa: ANN001
@@ -232,3 +279,23 @@ def test_do_update_portable_opens_page(bridge, monkeypatch):  # noqa: ANN001
     bridge.doUpdate()
     assert opened == ["https://page"]
     assert bridge.snapshot()["update"] is None  # спрятана после перехода
+
+
+def test_update_done_installs_into_current_folder(bridge, monkeypatch):  # noqa: ANN001
+    """2.4.9: helper получает папку работающей копии, а не путь по умолчанию."""
+    import vpn_launcher.ui.web.bridge as br  # noqa: PLC0415
+
+    calls: dict[str, tuple] = {}
+    fake_timer = type("_T", (), {"singleShot": staticmethod(lambda *a: None)})
+    monkeypatch.setattr(br, "QTimer", fake_timer)
+    monkeypatch.setattr(br, "update_lock_path", lambda: Path("update.lock"))
+    monkeypatch.setattr(br, "write_update_lock", lambda v: None)
+    monkeypatch.setattr(br, "write_helper", lambda *a: calls.setdefault("helper", a))
+    monkeypatch.setattr(br, "launch_helper", lambda *a: calls.setdefault("launch", a))
+
+    bridge._on_update_found(upd.UpdateInfo("2.4.9", "u", "z", "https://page"))
+    bridge._on_update_done("C:/tmp/Setup.exe")
+
+    expected = Path(sys.executable).parent
+    assert calls["helper"][-1] == expected
+    assert calls["launch"][-1] == expected
