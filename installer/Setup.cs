@@ -100,6 +100,11 @@ static class Setup
             Log("режим: установка");
             int code = Install();
             Log("=== готово, код " + code + " ===");
+            // 2.4.10: старые helper'ы (2.4.0-2.4.7) при любом коде, кроме 0,
+            // открывали notepad с vpnlauncher_setup.log. В тихом режиме код
+            // никогда не должен дойти до них: новый helper всё равно сверит
+            // версию exe и покажет причину внутри программы, без блокнота.
+            if (Silent && code != 0) { Log("тихий режим: код " + code + " скрыт от helper'а"); return 0; }
             return code;
         }
         catch (Exception ex)
@@ -110,7 +115,7 @@ static class Setup
             Log("  файлов в папке: " + SafeFileCount(TargetDir));
             Error("Ошибка установки", ex.Message + Environment.NewLine + Environment.NewLine +
                   "Подробности в файле: " + LogPath());
-            return 1;
+            return Silent ? 0 : 1;
         }
     }
 
@@ -557,7 +562,20 @@ static class Setup
         // дочерняя копия установит сама, мы выходим с кодом 4.
         if (busy && !IsElevated())
         {
-            if (RelaunchElevated() == 0) return 4;
+            int childPid = RelaunchElevated();
+            if (childPid > 0)
+            {
+                // 2.4.10: раньше тихий родитель выходил с кодом 4 - "я
+                // перезапустился с UAC, установит дочерняя копия". Старые
+                // helper'ы (2.4.0-2.4.7) при любом коде, кроме 0, открывали
+                // notepad с vpnlauncher_setup.log. У юзеров на старых версиях
+                // при обновлении вылезал блокнот, хотя установка шла дальше.
+                // В тихом режиме дожидаемся elevated-копию и возвращаем 0:
+                // ни один helper больше не показывает лог. Новый helper всё
+                // равно проверяет версию файла и покажет ошибку в окне программы.
+                if (Silent) return WaitForElevatedInstall(childPid);
+                return 4;
+            }
             Log("повышение прав недоступно, продолжаю без него");
         }
 
@@ -1321,13 +1339,47 @@ static class Setup
             p.StartInfo.WorkingDirectory = SelfDir;
             Log("перезапуск с повышенными правами: " + SelfExe + " " + sb.ToString());
             p.Start();
-            return 0;
+            return p.Id;
         }
         catch (Exception ex)
         {
             Log("не удалось запустить с повышенными правами: " + ex.Message);
             return -1;
         }
+    }
+
+    // Тихий родитель не должен выходить с ненулевым кодом, пока работает
+    // elevated-копия: старые helper'ы открывали блокнот с setup.log.
+    // Ждём либо смены версии exe, либо выхода дочернего процесса.
+    static int WaitForElevatedInstall(int childPid)
+    {
+        string exe = Path.Combine(TargetDir, ExeName);
+        DateTime deadline = DateTime.Now.AddMinutes(5);
+        while (DateTime.Now < deadline)
+        {
+            string v = ExeVersion(exe);
+            if (!string.IsNullOrEmpty(v) && v.StartsWith(Version)) { Log("elevated: версия уже " + v); return 0; }
+            bool alive = true;
+            try { using (Process p = Process.GetProcessById(childPid)) alive = !p.HasExited; }
+            catch (ArgumentException) { alive = false; }
+            catch { alive = true; }
+            if (!alive)
+            {
+                System.Threading.Thread.Sleep(1500);
+                v = ExeVersion(exe);
+                Log("elevated: процесс завершён, версия " + (v.Length > 0 ? v : "не читается"));
+                return 0;  // ошибку покажет новый helper/окно программы, не блокнот
+            }
+            System.Threading.Thread.Sleep(400);
+        }
+        Log("elevated: таймаут ожидания дочернего установщика");
+        return 0;
+    }
+
+    static string ExeVersion(string path)
+    {
+        try { return FileVersionInfo.GetVersionInfo(path).FileVersion ?? string.Empty; }
+        catch { return string.Empty; }
     }
 
     // Свои файлы мог занять только лаунчер из целевой папки, поэтому на

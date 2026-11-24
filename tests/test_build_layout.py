@@ -152,6 +152,20 @@ class TestSetupInstallDir:
         assert "if (!busy) busy = EngineFilesLocked();" in cs
         assert 'Path.Combine(TargetDir, "zapret", "bin")' in cs
 
+    def test_silent_elevated_relaunch_never_shows_setup_log(self):
+        # 2.4.10: код 4 после UAC заставлял старые helper'ы (<=2.4.7)
+        # открывать notepad с vpnlauncher_setup.log у юзеров на старых версиях.
+        cs = _read("installer/Setup.cs")
+        assert "if (Silent) return WaitForElevatedInstall(childPid);" in cs
+        assert "static int WaitForElevatedInstall(int childPid)" in cs
+        assert "return p.Id;" in cs
+
+    def test_silent_setup_never_returns_error_code_to_old_helper(self):
+        # любой ненулевой код в /S вызывал блокнот в старых клиентах
+        cs = _read("installer/Setup.cs")
+        assert "if (Silent && code != 0)" in cs
+        assert "return Silent ? 0 : 1;" in cs
+
 
 class TestSetupUpdateOverElevated:
     """Обновление поверх повышенного приложения (30.09.2026).
