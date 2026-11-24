@@ -20,6 +20,7 @@ import urllib.request
 
 from PySide6.QtCore import QThread, Signal
 
+from vpn_launcher.core.dnsfix import ensure_windows_doh
 from vpn_launcher.core.latency import measure_node_latency
 from vpn_launcher.core.subscription import fetch_nodes
 from vpn_launcher.core.update import download_file, fetch_latest
@@ -112,6 +113,10 @@ class ZapretWorker(QThread):
 
     def run(self) -> None:
         try:
+            # 2.4.10: провайдер отравляет UDP-DNS (youtube.com -> NXDOMAIN).
+            # Обход DPI без резолва бесполезен, поэтому перед подбором
+            # включаем штатный DoH Windows (только для публичных DNS).
+            ensure_windows_doh()
             name, msg = run_autotest(
                 self._controller,
                 progress=lambda t: self.progress.emit(t),

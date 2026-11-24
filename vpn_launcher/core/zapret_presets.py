@@ -46,6 +46,17 @@ v6 (11.11.2026) - НОВЫЕ АЛГОРИТМЫ ПОД ИНЦИДЕНТ DISCORD 
   Пробы расширены под инцидент: updates.discord.com (DiscordUpdates),
   i.ytimg.com (превью) и redirector.googlevideo.com (видеопоток).
 
+v7 (24.11.2026) - НОВЫЕ АЛГОРИТМЫ ПОД SNI-БЛОКИРОВКУ YOUTUBE:
+  У провайдера отравлен DNS (youtube.com -> NXDOMAIN по UDP, DoH
+  отвечает нормально), а TLS с SNI youtube.com режется по таймауту;
+  с чужим SNI тот же IP открывается. Проба теперь резолвит через DoH
+  (см. zapret._doh_ips), иначе автоподбор падал ДО проверки стратегий.
+  С DoH-пробой на этой сети 8/8 дают combo/alt11/alt13/autotls/badseq и
+  новые варианты из пакета 1.10.2: alt8 (badseq-increment=2),
+  alt10 (fooling=ts, фейки stun+4pda.to), alt12 (seqovl 664 + max.ru),
+  simplefake-alt2 (stun2+max.ru) и autotls-fake2/3 (фейк из реального
+  ClientHello). Они добавлены в PRESETS после badseq.
+
 v4 (12.10.2026) - ФИКС ДЕМОК ЭКРАНА (Discord, ошибка 1007):
   Часть демонстраций экрана не грузилась с combo, хотя ALT9 грузил.
   Два расхождения с эталоном найдены и выровнены: (1) fake-файлы были
@@ -89,6 +100,11 @@ _FAKE_GGLE = "+0@{BIN}tls_clienthello_www_google_com.bin"   # ClientHello google
 _FAKE_SFERUM = "+0@{BIN}tls_clienthello_www_sferum_ru.bin"  # ClientHello sferum.ru (661B)
 _FAKE_SOCHI = "+0@{BIN}tls_clienthello_sochi_park.bin"      # ClientHello sochi-park (244B)
 _FAKE_STUN2 = "+0@{BIN}stun2.bin"                           # STUN-пакет (120B)
+# v7 (24.11.2026): фейки из zapret-discord-youtube 1.10.2 для новых
+# стратегий alt8/alt10/alt12/simplefake-alt2 (источник только читался)
+_FAKE_STUN = "+0@{BIN}stun.bin"                             # STUN-пакет (100B)
+_FAKE_4PDA = "+0@{BIN}tls_clienthello_4pda_to.bin"          # ClientHello 4pda.to (284B)
+_FAKE_MAXRU = "+0@{BIN}tls_clienthello_max_ru.bin"          # ClientHello max.ru (664B)
 # паттерн seqovl-наложения: любой валидный ClientHello (наш google)
 _SEQOVL_PATTERN = "+0@{BIN}tls-clienthello-google.bin"
 
@@ -765,11 +781,168 @@ def _syndata_chain() -> list[str]:
     ]
 
 
+# --- v7 (24.11.2026): новые алгоритмы под SNI-блокировку YouTube --------
+# 24.11 проба падала на отравленном DNS, поэтому «ни одна стратегия не
+# помогла» было ложным. С DoH-пробой на этой сети проходят 8/8 не только
+# combo/alt11/alt13/autotls/badseq, но и свежие варианты из пакета
+# zapret-discord-youtube 1.10.2: alt8, alt10, alt12, simplefake-alt2 и две
+# авто-генерации фейка (autotls-fake2/3). Они добавлены для сетей, где
+# старые фейковые отпечатки уже выучены DPI.
+
+_FAKE_HTTP_MAXRU = f"--dpi-desync-fake-http={_FAKE_MAXRU}"
+
+
+def _tls_alt8() -> tuple[str, ...]:
+    """ALT8: fake + badseq-increment=2, фейк TLS без модификации."""
+    return (
+        "--dpi-desync=fake",
+        "--dpi-desync-repeats=6",
+        "--dpi-desync-fooling=badseq",
+        "--dpi-desync-badseq-increment=2",
+        "--dpi-desync-fake-tls-mod=none",
+    )
+
+
+def _tls_alt10() -> tuple[str, ...]:
+    """ALT10: fake с fooling=ts и двумя фейками (stun + 4pda.to)."""
+    return (
+        "--dpi-desync=fake",
+        "--dpi-desync-repeats=6",
+        "--dpi-desync-fooling=ts",
+        f"--dpi-desync-fake-tls={_FAKE_STUN}",
+        f"--dpi-desync-fake-tls={_FAKE_4PDA}",
+    )
+
+
+def _tls_alt12() -> tuple[str, ...]:
+    """ALT12: fake+multisplit, seqovl 664, фейки stun + max.ru."""
+    return (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=664",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=ts",
+        "--dpi-desync-repeats=8",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_MAXRU}",
+        f"--dpi-desync-fake-tls={_FAKE_STUN}",
+        f"--dpi-desync-fake-tls={_FAKE_MAXRU}",
+    )
+
+
+def _tls_simplefake_alt2() -> tuple[str, ...]:
+    """SIMPLE FAKE ALT2: fake с fooling=ts, фейки stun2 + max.ru."""
+    return (
+        "--dpi-desync=fake",
+        "--dpi-desync-repeats=6",
+        "--dpi-desync-fooling=ts",
+        f"--dpi-desync-fake-tls={_FAKE_STUN2}",
+        f"--dpi-desync-fake-tls={_FAKE_MAXRU}",
+    )
+
+
+def _tls_autotls_fake2() -> tuple[str, ...]:
+    """FAKE TLS AUTO ALT: fake+fakedsplit, фейк из реального ClientHello."""
+    return (
+        "--dpi-desync=fake,fakedsplit",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=badseq",
+        "--dpi-desync-badseq-increment=2",
+        "--dpi-desync-repeats=8",
+        "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+    )
+
+
+def _tls_autotls_fake3() -> tuple[str, ...]:
+    """FAKE TLS AUTO ALT2: seqovl 681 + большой шаг badseq, фейк авто."""
+    return (
+        "--dpi-desync=fake,multisplit",
+        "--dpi-desync-split-seqovl=681",
+        "--dpi-desync-split-pos=1",
+        "--dpi-desync-fooling=badseq",
+        "--dpi-desync-badseq-increment=10000000",
+        "--dpi-desync-repeats=8",
+        f"--dpi-desync-split-seqovl-pattern={_FAKE_GGLE}",
+        "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com",
+    )
+
+
+def _alt8_chain() -> list[str]:
+    return _suite(
+        "alt8",
+        quic=_QUIC_TECH_COMBO,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_alt8(),
+        google=_tls_alt8(),
+        main=_tls_alt8() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
+def _alt10_chain() -> list[str]:
+    return _suite(
+        "alt10",
+        quic=_QUIC_TECH_COMBO,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_alt10(),
+        google=_tls_alt10(),
+        main=_tls_alt10() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
+def _alt12_chain() -> list[str]:
+    return _suite(
+        "alt12",
+        quic=_QUIC_TECH_ALT,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_alt12(),
+        google=_tls_alt12(),
+        main=_tls_alt12() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
+def _simplefake_alt2_chain() -> list[str]:
+    return _suite(
+        "simplefake-alt2",
+        quic=_QUIC_TECH_COMBO,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_simplefake_alt2(),
+        google=_tls_simplefake_alt2(),
+        main=_tls_simplefake_alt2() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
+def _autotls_fake2_chain() -> list[str]:
+    return _suite(
+        "autotls-fake2",
+        quic=_QUIC_TECH_ALT,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_autotls_fake2(),
+        google=_tls_autotls_fake2(),
+        main=_tls_autotls_fake2() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
+def _autotls_fake3_chain() -> list[str]:
+    return _suite(
+        "autotls-fake3",
+        quic=_QUIC_TECH_ALT,
+        voice=_VOICE_TECH_COMBO,
+        media=_tls_autotls_fake3(),
+        google=_tls_autotls_fake3(),
+        main=_tls_autotls_fake3() + (_FAKE_HTTP_MAXRU,),
+    )
+
+
 PRESETS: list[dict] = [
     {"name": "combo",         "args": _combo_chain()},
     {"name": "alt2",          "args": _alt2_chain()},
     {"name": "autotls",       "args": _autotls_chain()},
     {"name": "badseq",        "args": _badseq_chain()},
+    # v7 (24.11.2026): новые варианты, проверенные на SNI-блокировке YouTube
+    {"name": "alt8",          "args": _alt8_chain()},
+    {"name": "alt10",         "args": _alt10_chain()},
+    {"name": "alt12",         "args": _alt12_chain()},
+    {"name": "simplefake-alt2", "args": _simplefake_alt2_chain()},
+    {"name": "autotls-fake2", "args": _autotls_fake2_chain()},
+    {"name": "autotls-fake3", "args": _autotls_fake3_chain()},
     {"name": "alt11",         "args": _alt11_chain()},
     {"name": "alt13",         "args": _alt13_chain()},
     {"name": "general",       "args": _chain("general", _tls_seqovl())},

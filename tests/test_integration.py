@@ -1472,12 +1472,13 @@ class TestZapret:
             return bool(self.started)
 
     def test_presets_packaged_and_valid(self):
-        """16 собственных стратегий (наши комбинации задокументированных
+        """22 собственных стратегии (наши комбинации задокументированных
         опций winws; 2.4.2: combo, alt11, alt13 - реплики пакета 1.10.4;
         2.4.4: alt2, autotls, badseq, syndata - реплики ALT2/ALT4/ALT5/
-        FAKE TLS AUTO ALT3 того же пакета; остальные 9 - наши): имена
-        уникальны, combo первая, аргументы целые, winws и все упомянутые
-        файлы запакованы (лежат на диске)."""
+        FAKE TLS AUTO ALT3 того же пакета; 2.4.10: alt8, alt10, alt12,
+        simplefake-alt2, autotls-fake2/3 - новые варианты 1.10.2;
+        остальные 9 - наши): имена уникальны, combo первая, аргументы
+        целые, winws и все упомянутые файлы запакованы (лежат на диске)."""
         from vpn_launcher.core.zapret import (
             BIN_DIR,
             LISTS_DIR,
@@ -1488,7 +1489,7 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert len(names) == 16 and len(set(names)) == 16
+        assert len(names) == 22 and len(set(names)) == 22
         assert names[0] == "combo"
         assert WINWS.exists()
         assert (BIN_DIR / "WinDivert64.sys").exists()
@@ -1524,7 +1525,12 @@ class TestZapret:
         хостлистов в TCP-профиле (ловит весь IPv4 TCP по SYN)."""
         from vpn_launcher.core.zapret_presets import PRESETS
 
-        seven = {"combo", "alt11", "alt13", "alt2", "autotls", "badseq"}
+        seven = {
+            "combo", "alt11", "alt13", "alt2", "autotls", "badseq",
+            # 2.4.10: новые стратегии тоже собраны через _suite (7 профилей)
+            "alt8", "alt10", "alt12", "simplefake-alt2",
+            "autotls-fake2", "autotls-fake3",
+        }
         for preset in PRESETS:
             profiles: list[list[str]] = [[]]
             for a in preset["args"]:
@@ -1626,7 +1632,9 @@ class TestZapret:
         from vpn_launcher.core.zapret_presets import PRESETS
 
         names = preset_names()
-        assert names[4:6] == ["alt11", "alt13"]
+        # 2.4.10: между badseq и alt11 добавлены новые стратегии, поэтому
+        # проверяем относительный порядок, а не жёсткие индексы
+        assert names.index("alt13") == names.index("alt11") + 1
         by_name = {p["name"]: p["args"] for p in PRESETS}
 
         def profiles_of(name: str) -> list[list[str]]:
@@ -1723,6 +1731,67 @@ class TestZapret:
         assert "--filter-tcp=80,443,2053,2083,2087,2096,8443" in syn[0]
         assert not any(a.startswith("--hostlist") for a in syn[0])
 
+    def test_incident_2_4_10_new_presets(self):
+        """2.4.10 (24.11.2026): SNI-блокировка YouTube. Добавлены варианты
+        из пакета 1.10.2, проверенные на живой сети (8/8): alt8, alt10,
+        alt12, simplefake-alt2, autotls-fake2/3. Проверяем их механику."""
+        from vpn_launcher.core.zapret import preset_names
+        from vpn_launcher.core.zapret_presets import PRESETS
+
+        names = preset_names()
+        for name in (
+            "alt8", "alt10", "alt12", "simplefake-alt2",
+            "autotls-fake2", "autotls-fake3",
+        ):
+            assert name in names, name
+        by_name = {p["name"]: p["args"] for p in PRESETS}
+
+        def profiles_of(name: str) -> list[list[str]]:
+            profs: list[list[str]] = [[]]
+            for a in by_name[name]:
+                if a == "--new":
+                    profs.append([])
+                else:
+                    profs[-1].append(a)
+            return profs
+
+        # alt8: fake без файла TLS, badseq-increment=2
+        main8 = profiles_of("alt8")[4]
+        assert "--dpi-desync=fake" in main8
+        assert "--dpi-desync-fake-tls-mod=none" in main8
+        assert "--dpi-desync-fooling=badseq" in main8
+        assert "--dpi-desync-badseq-increment=2" in main8
+        assert "--dpi-desync-fake-http=+0@{BIN}tls_clienthello_max_ru.bin" in main8
+
+        # alt10: два фейка (stun + 4pda.to) и fooling=ts
+        main10 = profiles_of("alt10")[4]
+        assert "--dpi-desync-fooling=ts" in main10
+        assert "--dpi-desync-fake-tls=+0@{BIN}stun.bin" in main10
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_4pda_to.bin" in main10
+
+        # alt12: seqovl 664, фейки stun + max.ru
+        main12 = profiles_of("alt12")[4]
+        assert "--dpi-desync=fake,multisplit" in main12
+        assert "--dpi-desync-split-seqovl=664" in main12
+        assert "--dpi-desync-fake-tls=+0@{BIN}stun.bin" in main12
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_max_ru.bin" in main12
+
+        # simplefake-alt2: stun2 + max.ru
+        main_sf = profiles_of("simplefake-alt2")[4]
+        assert "--dpi-desync-fake-tls=+0@{BIN}stun2.bin" in main_sf
+        assert "--dpi-desync-fake-tls=+0@{BIN}tls_clienthello_max_ru.bin" in main_sf
+
+        # autotls-fake2/3: фейк из реального ClientHello (нет fake-tls .bin)
+        main_af2 = profiles_of("autotls-fake2")[4]
+        assert "--dpi-desync=fake,fakedsplit" in main_af2
+        assert "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com" in main_af2
+        assert not any(a.startswith("--dpi-desync-fake-tls=") for a in main_af2)
+
+        main_af3 = profiles_of("autotls-fake3")[4]
+        assert "--dpi-desync-split-seqovl=681" in main_af3
+        assert "--dpi-desync-badseq-increment=10000000" in main_af3
+        assert "--dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com" in main_af3
+
     def test_payloads_shape(self):
         """Наши fake-пакеты: TLS-запись, QUIC Initial ровно 1200, STUN 100,
         Discord Voice IP Discovery начинается с type 0x0001."""
@@ -1762,6 +1831,9 @@ class TestZapret:
             # v5 (31.10, 2.4.2): эталонные фейки alt11/alt13 из пакета 1.10.4
             "tls_clienthello_www_google_com.bin", "tls_clienthello_www_sferum_ru.bin",
             "tls_clienthello_sochi_park.bin", "stun2.bin",
+            # v7 (24.11, 2.4.10): фейки новых стратегий из пакета 1.10.2
+            "stun.bin", "tls_clienthello_4pda_to.bin",
+            "tls_clienthello_max_ru.bin",
         }
         for fname, digest in recorded.items():
             data = (BIN_DIR / fname).read_bytes()
@@ -1877,18 +1949,23 @@ class TestZapret:
 
         assert hasattr(wmod, "run_autotest"), "импорт run_autotest пропал"
         seen: list[str | None] = []
+        doh: list[bool] = []
 
         def fake_autotest(ctl, progress=None, preferred=None):
             seen.append(preferred)
             return ("general", "ok")
 
         monkeypatch.setattr(wmod, "run_autotest", fake_autotest)
+        monkeypatch.setattr(
+            wmod, "ensure_windows_doh", lambda: doh.append(True) or True
+        )
         worker = ZapretWorker(object(), preferred="combo")
         captured: list[tuple[str, str]] = []
         worker.done.connect(lambda name, msg: captured.append((name, msg)))
         worker.run()  # прямой вызов, без QThread.start()
         assert captured == [("general", "ok")]
         assert seen == ["combo"]  # preferred дошёл до run_autotest
+        assert doh == [True]  # 2.4.10: перед подбором включён DoH
 
     def test_probe_http_4xx_counts_as_reachable(self, monkeypatch):
         """regression (12.10): шлюз Discord отвечает 404 - это ПРОХОДИМОСТЬ,
@@ -1932,6 +2009,66 @@ class TestZapret:
         # первый URL ушёл трижды (упал-упал-прошёл), остальные по одному разу
         assert calls[0] == calls[1] == calls[2] == zmod.PROBE_URLS[0]
         assert len(calls) == len(zmod.PROBE_URLS) + 2
+
+    def test_doh_resolves_when_system_dns_is_poisoned(self, monkeypatch):
+        """2.4.10: UDP-DNS отравлен (youtube.com -> NXDOMAIN), проба должна
+        брать адреса через DoH, иначе автоподбор падает до проверки
+        стратегий. Ответ DoH кэшируется, повторно сеть не дёргаем."""
+        import json as _json
+
+        from vpn_launcher.core import zapret as zmod
+
+        calls: list[str] = []
+
+        class Resp:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return _json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(req, timeout=0):
+            calls.append(req.full_url)
+            return Resp({"Status": 0, "Answer": [
+                {"name": "youtube.com.", "type": 1, "data": "172.253.152.190"},
+                {"name": "youtube.com.", "type": 1, "data": "172.253.152.91"},
+                {"name": "youtube.com.", "type": 16, "data": "v=spf1"},
+            ]})
+
+        monkeypatch.setattr(zmod.urllib.request, "urlopen", fake_urlopen)
+        zmod._doh_cache.clear()
+        assert zmod._doh_ips("youtube.com") == [
+            "172.253.152.190", "172.253.152.91",
+        ]
+        assert len(calls) == 1
+        # второй вызов - из кэша, без нового запроса
+        assert zmod._doh_ips("youtube.com") == [
+            "172.253.152.190", "172.253.152.91",
+        ]
+        assert len(calls) == 1
+        assert "cloudflare-dns.com" in calls[0]
+        zmod._doh_cache.clear()
+
+    def test_resolve_prefers_doh_and_falls_back(self, monkeypatch):
+        """DoH главный; системный DNS - только если DoH не дал адресов."""
+        from vpn_launcher.core import zapret as zmod
+
+        monkeypatch.setattr(zmod, "_doh_ips", lambda host: ["1.2.3.4"])
+        monkeypatch.setattr(
+            zmod, "_system_ips",
+            lambda host, port: (_ for _ in ()).throw(AssertionError("system DNS")),
+        )
+        assert zmod._resolve_ips("youtube.com", 443) == ["1.2.3.4"]
+
+        monkeypatch.setattr(zmod, "_doh_ips", lambda host: [])
+        monkeypatch.setattr(zmod, "_system_ips", lambda host, port: ["5.6.7.8"])
+        assert zmod._resolve_ips("youtube.com", 443) == ["5.6.7.8"]
 
     def test_probe_youtube_checked_first(self):
         """youtube - стабильный дискриминатор (без обхода режется всегда,

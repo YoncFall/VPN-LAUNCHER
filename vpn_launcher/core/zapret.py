@@ -2,9 +2,12 @@
 """Обход блокировок (zapret/winws): движок, стратегии, автоподбор.
 
 2.2.0 (просьба 02.10): кнопка в лаунчере сама подбирает рабочую стратегию
-обхода DPI. winws запускается с одной из 16 стратегий (zapret_presets),
+обхода DPI. winws запускается с одной из стратегий (zapret_presets),
 проверяются реальные сайты (Discord/YouTube), первая сработавшая
 сохраняется в state['zapretStrategy'] и остаётся работать.
+2.4.10 (24.11): проба резолвит хосты через DoH - у провайдера UDP-DNS
+отравлен (youtube.com -> NXDOMAIN), и прежний getaddrinfo обрывал подбор
+до проверки стратегий.
 2.4.2 (жалоба 31.10): клик сохранённой стратегией больше не слепо ей
 доверяет - run_autotest(preferred=...) проверяет её пробой и при провале
 сам уходит в полный подбор (иначе лампа DPI врала зелёным).
@@ -23,11 +26,13 @@ terminate только ему). Чужие экземпляры winws (напр�
 """
 from __future__ import annotations
 
+import json
 import socket
 import ssl
 import subprocess
 import time
 import urllib.parse
+import urllib.request
 from collections.abc import Callable
 
 from vpn_launcher.core.log import write_log
@@ -91,6 +96,64 @@ def build_args(name: str) -> list[str]:
 
 _MAX_IPS = 3  # сколько IP пробуем на один URL (ротация как у браузера)
 
+# 2.4.10 (24.11.2026): DNS по UDP у провайдера отравлен - youtube.com
+# отвечает NXDOMAIN даже через 1.1.1.1, хотя DoH возвращает нормальные
+# адреса. Из-за этого проба падала на getaddrinfo ДО проверки стратегии,
+# и автоподбор сообщал «ни одна не помогла», хотя combo работал.
+# Резолвим через DoH, системный DNS - только запасной путь.
+_DOH_URLS = (
+    "https://cloudflare-dns.com/dns-query?name={host}&type=A",
+    "https://dns.google/resolve?name={host}&type=A",
+)
+_DOH_TTL = 300.0
+_doh_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def _doh_ips(host: str) -> list[str]:
+    """IPv4-адреса хоста через DoH (Cloudflare, затем Google)."""
+    now = time.monotonic()
+    cached = _doh_cache.get(host)
+    if cached is not None and now - cached[0] < _DOH_TTL:
+        return cached[1]
+    for template in _DOH_URLS:
+        try:
+            req = urllib.request.Request(
+                template.format(host=urllib.parse.quote(host)),
+                headers={"accept": "application/dns-json"},
+            )
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.load(resp)
+            ips: list[str] = []
+            for answer in data.get("Answer", []):
+                if answer.get("type") != 1:
+                    continue
+                ip = str(answer.get("data", ""))
+                if ip and ip not in ips:
+                    ips.append(ip)
+            if ips:
+                _doh_cache[host] = (now, ips)
+                return ips
+        except Exception:
+            continue
+    return []
+
+
+def _system_ips(host: str, port: int) -> list[str]:
+    infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    ips: list[str] = []
+    for fam, _st, _pr, _cn, sa in infos:
+        if fam == socket.AF_INET and sa[0] not in ips:
+            ips.append(sa[0])
+    return ips
+
+
+def _resolve_ips(host: str, port: int) -> list[str]:
+    """Сначала DoH, при его недоступности - системный DNS."""
+    ips = _doh_ips(host)
+    if ips:
+        return ips
+    return _system_ips(host, port)
+
 
 def _fetch(url: str, timeout: float) -> int:
     """GET по URL со сменой IP при сбое (как это делает браузер).
@@ -107,11 +170,7 @@ def _fetch(url: str, timeout: float) -> int:
     target = parts.path or "/"
     if parts.query:
         target += "?" + parts.query
-    infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    ips: list[str] = []
-    for fam, _st, _pr, _cn, sa in infos:
-        if fam == socket.AF_INET and sa[0] not in ips:
-            ips.append(sa[0])
+    ips = _resolve_ips(host, port)
     req = (
         f"GET {target} HTTP/1.1\r\nHost: {host}\r\n"
         "User-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
